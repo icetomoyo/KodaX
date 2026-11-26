@@ -187,41 +187,6 @@ const MEMORY_ARGS: ArgumentDefinition[] = [
   { name: 'help', description: 'Show memory help', type: 'enum' },
 ];
 
-const LEARN_SUBCOMMAND_ARGS: ArgumentDefinition[] = [
-  { name: 'list', description: 'List learned capabilities', type: 'enum' },
-  { name: 'ready', description: 'List capabilities ready for review/control', type: 'enum' },
-  { name: 'pending', description: 'Compatibility alias for ready capabilities', type: 'enum' },
-  { name: 'show', description: 'Inspect one exact learned capability', type: 'enum' },
-  { name: 'review', description: 'Start or restart bounded canary review', type: 'enum' },
-  { name: 'trust', description: 'Explicitly trust a reviewed revision', type: 'enum' },
-  { name: 'reject', description: 'Reject a learned capability', type: 'enum' },
-  { name: 'disable', description: 'Disable an active learned capability', type: 'enum' },
-  { name: 'rollback', description: 'Restore the previous good revision', type: 'enum' },
-  { name: 'promote', description: 'Promote an exact revision to the user Skill catalog', type: 'enum' },
-  { name: 'help', description: 'Show Learning Center help', type: 'enum' },
-];
-
-function getLearnArgs(argParts: string[]): ArgumentDefinition[] {
-  const [subcommand = ''] = argParts;
-  const normalizedSubcommand = subcommand.toLowerCase();
-  const effectiveLength = argParts.length === 1 && argParts[0] === '' ? 0 : argParts.length;
-  if (effectiveLength <= 1) return LEARN_SUBCOMMAND_ARGS;
-  if (normalizedSubcommand === 'help' && effectiveLength <= 2) {
-    return [{ name: 'promote', description: 'Show dedicated promotion help', type: 'enum' }];
-  }
-  if (normalizedSubcommand !== 'promote') return [];
-  if (effectiveLength <= 2) {
-    return [{ name: '--help', description: 'Show dedicated promotion help', type: 'enum' }];
-  }
-  if (effectiveLength <= 3) {
-    return [{ name: '--scope', description: 'Choose the formal user Skill scope', type: 'enum' }];
-  }
-  if (argParts[2]?.toLowerCase() === '--scope' && effectiveLength <= 4) {
-    return [{ name: 'user', description: 'Promote to the formal user Skill catalog', type: 'enum' }];
-  }
-  return [];
-}
-
 const GOAL_ARGS: ArgumentDefinition[] = [
   { name: 'status', description: 'Show current persistent goal', type: 'enum' },
   { name: 'pause', description: 'Pause the active goal', type: 'enum' },
@@ -690,7 +655,6 @@ export const COMMAND_ARGUMENTS: CommandArgumentsRegistry = new Map([
 const MODEL_COMMAND_NAMES = new Set(['model', 'm', 'provider']);
 const REPO_INTEL_COMMAND_NAMES = new Set(['repo-intel']);
 const WORKFLOW_COMMAND_NAMES = new Set(['workflow']);
-const LEARN_COMMAND_NAMES = new Set(['learn']);
 
 export function getCommandArguments(commandName: string, partial?: string, argParts: string[] = []): ArgumentDefinition[] {
   const key = commandName.toLowerCase();
@@ -702,9 +666,6 @@ export function getCommandArguments(commandName: string, partial?: string, argPa
   }
   if (WORKFLOW_COMMAND_NAMES.has(key)) {
     return getWorkflowArgs(argParts);
-  }
-  if (LEARN_COMMAND_NAMES.has(key)) {
-    return getLearnArgs(argParts);
   }
   return COMMAND_ARGUMENTS.get(key) ?? [];
 }

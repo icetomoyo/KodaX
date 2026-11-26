@@ -10,10 +10,6 @@ import {
   type KodaXToolDefinition, type KodaXReasoningRequest, type KodaXProviderStreamOptions,
 } from '@kodax-ai/llm';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
-import {
-  createLearningCenterService, LearnedAreaStore, commitLearnedSkillRevision,
-  createLearnedCapabilityScope, resolveProjectLearnedAreaRoot,
-} from '@kodax-ai/agent';
 import { getActiveExtensionRuntime } from '@kodax-ai/coding';
 import { createInteractiveContext, executeCommand, type CommandCallbacks } from '@kodax-ai/repl';
 import { applyClientSessionMetadata } from '../packages/repl/src/session/client-session.js';
@@ -573,109 +569,6 @@ it('keeps compact exclusive while it runs and returns an honest provider failure
   } finally { releaseSummary(); }
   expect(await compacting).toMatchObject({ compacted: true });
   expect(await second.sessions.read(session.id)).toMatchObject({ id: session.id });
-}, 60_000);
-
-it('promotes the exact learned Skill through the product client with no broader scope', async () => {
-  const identity = { tenantId: 'tenant-product', projectId: 'project-product' };
-  const learnedRoot = resolveProjectLearnedAreaRoot(path.join(homeDir, '.kodax'), identity);
-  const store = new LearnedAreaStore(learnedRoot);
-  await store.initialize();
-  const seeded = await commitLearnedSkillRevision(store, {
-    scope: createLearnedCapabilityScope(learnedRoot, identity),
-    spec: {
-      name: 'product-release-skill', description: 'Use when verifying a release.',
-      purpose: 'Verify the release from reproducible evidence.', triggers: ['Release needs verification.'],
-      steps: ['Run the exact release verification suite.'], verification: ['Require a passing check artifact.'],
-      pitfalls: ['Do not treat model self-report as verification.'],
-    },
-    disposition: 'ready', operation: 'create',
-    provenance: { jobId: 'job-product-promote', inputHash: 'a'.repeat(64), decisionId: 'decision-product-promote', actionId: 'action-product-promote' },
-  });
-  await expect(first.learning.promote(seeded.capabilityId, 'project' as unknown as 'user')).rejects.toThrow();
-  expect(await second.learning.get(seeded.capabilityId)).toMatchObject({ lifecycle: 'ready' });
-  await first.learning.promote(seeded.capabilityId, 'user');
-  expect(await second.learning.get(seeded.capabilityId)).toMatchObject({ lifecycle: 'promoted_user', slug: seeded.slug });
-  expect(await readFile(path.join(homeDir, '.kodax', 'skills', seeded.slug, 'SKILL.md'), 'utf8'))
-    .toContain('Run the exact release verification suite.');
-}, 60_000);
-
-it('keeps Learning notices client scoped while governance and subscriptions share Host facts', async () => {
-  const seed = createLearningCenterService({ rootDir: path.join(homeDir, '.kodax', 'learned'), clientIdentity: 'seed' });
-  await seed.record({
-    schemaVersion: 1, capabilityId: 'lc_product_test', displayName: 'Release Skill', slug: 'release-skill',
-    carrier: 'skill', lifecycle: 'ready', revision: 1,
-    createdAt: '2026-07-17T00:00:00.000Z', updatedAt: '2026-07-17T00:00:00.000Z',
-    source: { kind: 'learning_controller' },
-  });
-  expect((await first.learning.list({ lifecycle: 'ready' })).items.map((item) => item.capabilityId)).toEqual(['lc_product_test']);
-  expect((await first.learning.getSnapshot()).ready).toBe(1);
-  expect((await second.learning.getSnapshot()).ready).toBe(1);
-  await first.learning.acknowledge('lc_product_test');
-  expect((await first.learning.getSnapshot()).ready).toBe(0);
-  expect((await second.learning.getSnapshot()).ready).toBe(1);
-  await first.disconnect();
-  first = await connectKodaXClient({ homeDir, endpoint: endpointPath, clientInfo: { name: 'domain-test', instanceId: 'first' } });
-  expect((await first.learning.getSnapshot()).ready).toBe(0);
-  await second.learning.snooze('lc_product_test', '2099-01-01T00:00:00.000Z');
-  expect((await second.learning.getSnapshot()).ready).toBe(0);
-  const snapshot = await first.learning.getSnapshot();
-  const iterator = first.learning.subscribe({ afterRevision: snapshot.revision })[Symbol.asyncIterator]();
-  const next = iterator.next();
-  try {
-    await second.learning.disable('lc_product_test');
-    expect((await next).value).toMatchObject({ capabilityId: 'lc_product_test', lifecycle: 'archived' });
-    expect(await first.learning.get('lc_product_test')).toMatchObject({ lifecycle: 'archived' });
-    expect((await second.learning.events(snapshot.revision)).some((event) => event.lifecycle === 'archived')).toBe(true);
-  } finally {
-    await iterator.return?.();
-  }
-}, 60_000);
-
-it('settles disconnected Learning waits and rebuilds from Host facts after ready', async () => {
-  const stream = first.learning.subscribe();
-  await stream.ready;
-  const waiting = stream.next().then(() => 'unexpected event', () => 'disconnected');
-  await first.disconnect();
-  expect(await waiting).toBe('disconnected');
-  await stream.return?.();
-  const seed = createLearningCenterService({ rootDir: path.join(homeDir, '.kodax', 'learned'), clientIdentity: 'seed' });
-  await seed.record({
-    schemaVersion: 1, capabilityId: 'lc_while_disconnected', displayName: 'Recovered Skill', slug: 'recovered-skill',
-    carrier: 'skill', lifecycle: 'ready', revision: 1,
-    createdAt: '2026-09-26T00:00:00.000Z', updatedAt: '2026-09-26T00:00:00.000Z',
-    source: { kind: 'learning_controller' },
-  });
-  first = await connectKodaXClient({ homeDir, endpoint: endpointPath, clientInfo: { name: 'domain-test', instanceId: 'first' } });
-  const rebuilt = first.learning.subscribe();
-  try {
-    await rebuilt.ready;
-    expect((await first.learning.list()).items.map((record) => record.capabilityId)).toEqual(['lc_while_disconnected']);
-    expect(await first.learning.get('lc_while_disconnected')).toMatchObject({ lifecycle: 'ready' });
-    expect(await first.learning.getSnapshot()).toMatchObject({ ready: 1 });
-    expect((await rebuilt.next()).value).toMatchObject({ capabilityId: 'lc_while_disconnected' });
-  } finally { await rebuilt.return?.(); }
-}, 60_000);
-
-it('reports a Host Learning store failure to the waiting client without disconnecting the client', async () => {
-  const store = new LearnedAreaStore(path.join(homeDir, '.kodax', 'learned'));
-  await store.initialize();
-  const stream = first.learning.subscribe();
-  await stream.ready;
-  const next = stream.next().then(() => 'unexpected event', (error: unknown) => error instanceof Error ? error.message : String(error));
-  try {
-    await writeFile(path.join(store.paths.events, 'broken-event.json'), '{invalid');
-    const result = await Promise.race([next, new Promise<string>((resolve) => setTimeout(() => resolve('still waiting'), 1_000))]);
-    expect(result).toContain('invalid JSON');
-    expect((await first.sessions.list()).length).toBe(0);
-  } finally { await stream.return?.(); }
-}, 60_000);
-
-it('rejects Learning ready when Host registration fails before its acknowledgement', async () => {
-  const stream = first.learning.subscribe({ afterRevision: -1 });
-  try {
-    await expect(stream.ready).rejects.toThrow('afterRevision');
-    await expect(stream.next()).rejects.toThrow('afterRevision');
-  } finally { await stream.return?.(); }
 }, 60_000);
 
 it('manages project Memory through both clients and rejects stale approval and forget previews', async () => {

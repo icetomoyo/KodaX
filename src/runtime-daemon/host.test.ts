@@ -2145,21 +2145,6 @@ function makeRuntime(
         return false;
       },
     },
-    learning: {
-      async list() { return { items: [], revision: 0 }; },
-      async get() { throw new Error("Learning is not used by this fixture."); },
-      async getSnapshot() { return { ready: 0, newlyActive: 0, attention: 0, active: 0, revision: 0 }; },
-      async events() { return []; },
-      subscribe() { return Object.assign((async function* () {})(), { ready: Promise.resolve() }); },
-      async acknowledge() {},
-      async snooze() {},
-      async reject() {},
-      async disable() {},
-      async rollback() {},
-      async promote() {},
-      async review() {},
-      async trust() {},
-    },
     memory: {
       forProject() { throw new Error("Memory is not used by this fixture."); },
     },

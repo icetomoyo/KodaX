@@ -94,7 +94,6 @@ export type {
   RuntimeDaemonRunService,
   RuntimeDaemonStartRunInput,
   RuntimeKodaXOptions,
-  RuntimeLearningService,
   RuntimePermissionRequestInput,
   RuntimePermissionDecision,
   RuntimePermissionPrompt,

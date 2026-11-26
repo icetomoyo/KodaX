@@ -93,31 +93,6 @@ describe('help command output', () => {
     expect(output).toContain('/exit - Exit Interactive Mode');
   });
 
-  it.each([
-    { command: 'learn', args: ['help', 'promote'] },
-    { command: 'help', args: ['learn', 'promote'] },
-    { command: 'learn', args: ['promote', '--help'] },
-  ])('routes learned Skill promotion help through the real dispatcher: /$command $args', async (parsed) => {
-    const chunks: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
-      chunks.push(args.map(String).join(' '));
-    });
-
-    try {
-      const result = await executeCommand(
-        parsed,
-        await createInteractiveContext({}),
-        {} as unknown as CommandCallbacks,
-        {} as never,
-      );
-      expect(result).toBe(true);
-      expect(chunks.join('\n')).toContain('/learn promote <name|slug|capability-id> [--scope user]');
-      expect(chunks.join('\n')).toContain('Promote is an explicit ownership transfer');
-    } finally {
-      logSpy.mockRestore();
-    }
-  });
-
   it('shows the shared onboarding guide for /setup --help', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const context = await createInteractiveContext({});

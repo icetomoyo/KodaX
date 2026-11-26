@@ -98,8 +98,6 @@ import { parseRuntimeEvent } from '../runtime-event.js';
 import { toRuntimePermissionRequest, toRuntimeUserInputRequest } from '../client-interactions.js';
 import type {
   AskUserAnswer,
-  LearningEvent,
-  LearningSubscribeOptions,
   McpServerConfig,
   McpServerToolList,
 } from '@kodax-ai/agent';
@@ -232,7 +230,7 @@ export class RuntimeSubscriptionUpgradeRequiredError extends Error {
   readonly capability = 'subscriptionLifecycle' as const;
   readonly requiredVersion = 1 as const;
   constructor() {
-    super('Runtime daemon lacks subscriptionLifecycle v1. Upgrade and restart the Host before observing Learning or Workflow.');
+    super('Runtime daemon lacks subscriptionLifecycle v1. Upgrade and restart the Host before observing Workflow.');
     this.name = 'RuntimeSubscriptionUpgradeRequiredError';
   }
 }
@@ -1179,49 +1177,6 @@ export function createRuntimeDaemonClient(
         return request('workflow.start', input as unknown as Record<string, unknown>) as Promise<RuntimeWorkflowStartResult>;
       },
     },
-    learning: {
-      list(query) {
-        return request('learning.list', query ?? {}) as ReturnType<KodaXRuntime['learning']['list']>;
-      },
-      get(nameOrSlug) {
-        return request('learning.get', { nameOrSlug }) as ReturnType<KodaXRuntime['learning']['get']>;
-      },
-      getSnapshot() {
-        return request('learning.snapshot') as ReturnType<KodaXRuntime['learning']['getSnapshot']>;
-      },
-      events(afterRevision) {
-        return request('learning.events', {
-          ...(afterRevision !== undefined ? { afterRevision } : {}),
-        }) as ReturnType<KodaXRuntime['learning']['events']>;
-      },
-      subscribe(subscribeOptions) {
-        return learningEventPushIterable(options.transport, subscriptionRequest, subscribeOptions);
-      },
-      async acknowledge(nameOrSlug) {
-        await request('learning.acknowledge', { nameOrSlug });
-      },
-      async snooze(nameOrSlug, until) {
-        await request('learning.snooze', { nameOrSlug, until });
-      },
-      async reject(nameOrSlug, ifRevision) {
-        await request('learning.reject', learningDecision({ nameOrSlug }, ifRevision));
-      },
-      async disable(nameOrSlug, ifRevision) {
-        await request('learning.disable', learningDecision({ nameOrSlug }, ifRevision));
-      },
-      async rollback(nameOrSlug, ifRevision) {
-        await request('learning.rollback', learningDecision({ nameOrSlug }, ifRevision));
-      },
-      async promote(nameOrSlug, scope, ifRevision) {
-        await request('learning.promote', learningDecision({ nameOrSlug, scope }, ifRevision));
-      },
-      async review(nameOrSlug, ifRevision) {
-        await request('learning.review', learningDecision({ nameOrSlug }, ifRevision));
-      },
-      async trust(nameOrSlug, ifRevision) {
-        await request('learning.trust', learningDecision({ nameOrSlug }, ifRevision));
-      },
-    },
     config: {
       read() {
         return request('config.read');
@@ -1546,62 +1501,6 @@ export function createRuntimeDaemonClient(
     close: closeClient,
   };
   return runtime;
-}
-
-/**
- * Push-backed learning event stream: a learning.subscribe notification
- * subscription surfaced as the contract AsyncIterable. Events emitted
- * between subscribe request and handshake are buffered, mirroring the
- * workflow subscription semantics.
- */
-function learningEventPushIterable(
-  transport: RuntimeDaemonClientTransport,
-  request: RuntimeDaemonClientTransport["request"],
-  options: LearningSubscribeOptions | undefined,
-): AsyncIterableIterator<LearningEvent> & { readonly ready: Promise<void> } {
-  const buffered: LearningEvent[] = [];
-  const waiters: Array<{
-    resolve: (result: IteratorResult<LearningEvent>) => void;
-    reject: (error: unknown) => void;
-  }> = [];
-  let closed = false;
-  let failed = false;
-  let failureReason: unknown;
-  const fail = (error: unknown): void => {
-    if (closed || failed) return;
-    failed = true;
-    failureReason = error;
-    buffered.length = 0;
-    for (const waiter of waiters.splice(0)) waiter.reject(error);
-  };
-  const subscription = subscribeToDaemonNotification(transport, request, "learning.subscribe", {
-    ...(options?.afterRevision !== undefined ? { afterRevision: options.afterRevision } : {}),
-  }, (value) => {
-    if (closed || failed) return;
-    const event = value as LearningEvent;
-    const waiter = waiters.shift();
-    if (waiter) waiter.resolve({ value: event, done: false });
-    else buffered.push(event);
-  }, fail);
-  void subscription.ready?.catch(fail);
-  const iterator: AsyncIterableIterator<LearningEvent> & { readonly ready: Promise<void> } = {
-    ready: subscription.ready,
-    [Symbol.asyncIterator]() { return this; },
-    async next(): Promise<IteratorResult<LearningEvent>> {
-      if (closed) return { done: true, value: undefined };
-      if (failed) throw failureReason;
-      if (buffered.length > 0) return { value: buffered.shift()!, done: false };
-      return new Promise((resolve, reject) => { waiters.push({ resolve, reject }); });
-    },
-    async return(): Promise<IteratorResult<LearningEvent>> {
-      closed = true;
-      buffered.length = 0;
-      subscription.close();
-      for (const waiter of waiters.splice(0)) waiter.resolve({ done: true, value: undefined });
-      return { done: true, value: undefined };
-    },
-  };
-  return iterator;
 }
 
 function reportReverseBridgeFailure(kind: string): void {
@@ -2417,7 +2316,7 @@ function subscribeToDaemonWorkflowEvents(
 function subscribeToDaemonNotification(
   transport: RuntimeDaemonClientTransport,
   request: RuntimeDaemonClientTransport['request'],
-  method: 'workflow.subscribe' | 'learning.subscribe',
+  method: 'workflow.subscribe',
   params: unknown,
   listener: (event: unknown) => void,
   onError?: (error: unknown) => void,
@@ -2437,7 +2336,7 @@ function subscribeToDaemonNotification(
     pendingNotifications.length = 0;
     local?.close();
     lifecycle?.close();
-    if (remoteSubscriptionId !== undefined) unsubscribeRemote(request, method, remoteSubscriptionId);
+    if (remoteSubscriptionId !== undefined) unsubscribeRemote(request, remoteSubscriptionId);
   };
   const fail = (error: unknown): void => {
     if (closed) return;
@@ -2473,7 +2372,7 @@ function subscribeToDaemonNotification(
   if (closed) lifecycle?.close();
   void request(method, params).then((result) => {
     remoteSubscriptionId = requireStringField(requireRecord(result), 'subscriptionId');
-    if (closed) { unsubscribeRemote(request, method, remoteSubscriptionId); return; }
+    if (closed) { unsubscribeRemote(request, remoteSubscriptionId); return; }
     for (const { payload, failed } of pendingNotifications.splice(0)) {
       if (closed) break;
       if (payload.subscriptionId !== remoteSubscriptionId) continue;
@@ -2529,13 +2428,9 @@ function deserializeRuntimeError(value: unknown): Error | undefined {
 
 function unsubscribeRemote(
   request: RuntimeDaemonClientTransport['request'],
-  subscribeMethod: 'workflow.subscribe' | 'learning.subscribe',
   subscriptionId: string,
 ): void {
-  const unsubscribeMethod = subscribeMethod === 'workflow.subscribe'
-    ? 'workflow.unsubscribe'
-    : 'learning.unsubscribe';
-  void request(unsubscribeMethod, { subscriptionId }).catch((error: unknown) => {
+  void request('workflow.unsubscribe', { subscriptionId }).catch((error: unknown) => {
     emitKodaXDiagnostic({ source: 'runtime.daemon.client', level: 'warn', message: 'Failed to release a remote subscription.',
       detail: error instanceof Error ? error.message : String(error) });
   });
@@ -2670,10 +2565,6 @@ function requireStringField(record: Record<string, unknown>, key: string): strin
     throw new Error(`Expected daemon response string field: ${key}`);
   }
   return value;
-}
-
-function learningDecision(params: Record<string, unknown>, ifRevision: number | undefined): Record<string, unknown> {
-  return ifRevision === undefined ? params : { ...params, ifRevision };
 }
 
 function optionalStringField(record: Record<string, unknown>, key: string): string | undefined {

@@ -95,7 +95,6 @@ import {
   MultipleUserSkillReferencesError,
 } from './user-skill-invocation.js';
 import { CommandRegistry } from '../commands/registry.js';
-import { formatLearningStatus } from '../ui/view-models/learning-summary.js';
 import { copyCommand } from '../commands/copy-command.js';
 import {
   hostModelCommand,
@@ -103,7 +102,6 @@ import {
   hostExecutionConfigCommand,
   saveAndApplyHostSetting,
 } from '../commands/host-settings.js';
-import { learnCommand } from '../commands/learn-command.js';
 import { memoryCommand } from '../commands/memory-command.js';
 import { goalCommand } from '../commands/goal-command.js';
 import { workflowCommand } from '../commands/workflow-command.js';
@@ -112,10 +110,6 @@ import { recoverCommand } from '../commands/recover-command.js';
 import { reviewCommand } from '../commands/review-command.js';
 import { agentsCommand } from '../commands/agents-command.js';
 import { workModeCommand } from '../commands/work-mode-command.js';
-import {
-  printLearningPendingForFilter,
-  resolveLearningCommandCwd,
-} from '../commands/learning-inbox.js';
 import { getActivePasteStore } from '../ui/utils/paste-store.js';
 import { retrievePastedText } from '../ui/utils/paste-cache.js';
 import {
@@ -1972,13 +1966,9 @@ export const BUILTIN_COMMANDS: Command[] = [
   {
     name: 'skill',
     category: 'Skills and Memory',
-    description: 'Skill namespace - list, invoke, or review skill learning',
-    usage: '/skill[:name] [pending|args]',
+    description: 'Skill namespace - list or invoke skills',
+    usage: '/skill[:name] [args]',
     handler: async (args, context) => {
-      if ((args[0] ?? '').toLowerCase() === 'pending') {
-        await printLearningPendingForFilter(resolveLearningCommandCwd(context), 'skill');
-        return;
-      }
       // When /skill:name is used, parseCommand extracts the name and executeCommand
       // calls executeSkillCommand directly. Plain /skill lists the namespace.
       await handleSkillNamespaceCommand(args, context);
@@ -1990,7 +1980,6 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.dim('  /<skill-name> [args] ') + 'Invoke a skill when no command uses that name');
       console.log(chalk.dim('  /skill:<name> [args] ') + 'Invoke a skill with the compatibility form');
       console.log(chalk.dim('  /skill reload        ') + 'Reload skills from disk');
-      console.log(chalk.dim('  /skill pending       ') + 'List pending method-guide learning suggestions');
       console.log();
       console.log(chalk.bold('Description:'));
       console.log(chalk.dim('  Direct slash skill invocation follows the Claude Code style.'));
@@ -2084,7 +2073,6 @@ export const BUILTIN_COMMANDS: Command[] = [
     },
   },
   copyCommand,
-  learnCommand,
   memoryCommand,
   goalCommand,
   workflowCommand,
@@ -2546,7 +2534,6 @@ function printHelp(hostCommands: readonly ClientCommandInfo[] = []): void {
   console.log(chalk.dim('Invoking skills:'));
   console.log(`  ${chalk.cyan('/<skill-name>')}     Invoke a skill when no command has that name`);
   console.log(`  ${chalk.cyan('/skill:<name>')}     Compatibility form (e.g., /skill:code-review)`);
-  console.log(`  ${chalk.cyan('/skill pending')}    Review pending skill learning suggestions`);
   console.log();
   console.log(chalk.dim(`Tip: ${chalk.cyan('/<command> help')} shows command-specific help.`));
   console.log();
@@ -2684,21 +2671,9 @@ async function printStatus(
   if (detailMode === 'runtime') {
     await printRuntimeSurfaceStatus(callbacks);
   }
-  await printLearningSurfaceStatus(callbacks);
   console.log(chalk.dim(`  Created:     ${context.createdAt}`));
   console.log(chalk.dim(`  Last Active: ${context.lastAccessed}`));
   console.log();
-}
-
-async function printLearningSurfaceStatus(callbacks: CommandCallbacks | undefined): Promise<void> {
-  if (!callbacks?.getLearningSummary) return;
-  try {
-    console.log(chalk.dim(`  Learning:    ${formatLearningStatus(await callbacks.getLearningSummary())}`));
-  } catch (error: unknown) {
-    console.log(chalk.dim(
-      `  Learning:    unavailable (${error instanceof Error ? error.message : String(error)})`,
-    ));
-  }
 }
 
 async function printRuntimeSurfaceStatus(callbacks: CommandCallbacks | undefined): Promise<void> {
@@ -2818,7 +2793,6 @@ function printSkillsListPiMonoStyle(skills: SkillMetadata[]): void {
   console.log();
   console.log(chalk.dim(`Total: ${skills.length} skills`));
   console.log(chalk.dim('Usage: /<skill-name> [args], legacy /skill:<name> [args], or ask naturally'));
-  console.log(chalk.dim('Review pending skill learning suggestions with /skill pending'));
   console.log();
 }
 

@@ -133,26 +133,6 @@ describe('status workspace output', () => {
     expect(currentConfig.permissionMode).toBe('accept-edits');
   });
 
-  it('shows the client-specific Learning Center summary', async () => {
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const statusCommand = BUILTIN_COMMANDS.find((command) => command.name === 'status');
-    const getLearningSummary = vi.fn(async () => ({
-      ready: 1, newlyActive: 2, attention: 1, active: 6, revision: 10,
-    }));
-
-    await statusCommand!.handler(
-      [],
-      context,
-      { getLearningSummary } as unknown as CommandCallbacks,
-      currentConfig,
-    );
-
-    expect(getLearningSummary).toHaveBeenCalledTimes(1);
-    expect(logSpy.mock.calls.flat().join('\n')).toContain(
-      'Learning:    ready=1  new=2  attention=1  active=6',
-    );
-  });
-
   it('shows built-in repo-intel status without external endpoint/bin controls', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const repoIntelCommand = BUILTIN_COMMANDS.find((command) => command.name === 'repo-intel');

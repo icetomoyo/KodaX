@@ -27,8 +27,6 @@ export interface RuntimeCapabilityRequirements {
   readonly a2aConfigReconciler?: 1;
   readonly sessionObservation?: 1;
   readonly afterTurnInput?: 1;
-  readonly learningCenter?: 1;
-  readonly skillLearningLoop?: 1;
   readonly interruptInput?: 1;
   readonly askUserTransport?: 1;
   readonly permissionCas?: 1;
@@ -103,8 +101,6 @@ export const KODAX_RUNTIME_SDK_CAPABILITIES = Object.freeze({
   a2aConfigReconciler: 1,
   sessionObservation: 1,
   afterTurnInput: 1,
-  learningCenter: 1,
-  skillLearningLoop: 1,
   interruptInput: 1,
   askUserTransport: 1,
   permissionCas: 1,

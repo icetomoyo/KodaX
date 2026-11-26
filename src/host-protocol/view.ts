@@ -18,7 +18,6 @@
 import { z } from 'zod/v4';
 
 import { FileChange, Interaction, LocalInteraction } from './interaction.js';
-import { LearningCounts } from './learning.js';
 import { HostId, hostParams, hostResult, type HostMethodRegistry } from './schema.js';
 import { LocalSession, Session, SessionRef } from './session.js';
 import { Settings } from './settings.js';
@@ -270,8 +269,8 @@ const local = viewDocument(LocalViewItem, LOCAL_SESSION_VIEW_KEYS);
 /**
  * The keys of the Host document. It has no items. The Host reads it again when
  * a Session is created, archived, restored or deleted, when a Run starts,
- * changes phase or ends, when an interaction opens or settles, and when the
- * Host learns something, at most once a second.
+ * changes phase or ends, and when an interaction opens or settles, at most
+ * once a second.
  */
 const HOST_DOCUMENT_KEYS = {
   /** The newest Sessions that are not archived, at most 50, as `session.list` returns them. It reads the rest. */
@@ -280,8 +279,6 @@ const HOST_DOCUMENT_KEYS = {
   runs: z.array(z.object({ id: z.string(), sessionId: z.string(), phase: z.string() })),
   /** What any Session waits for a person to answer. */
   interactions: z.array(Interaction),
-  /** The learned capabilities that wait on the person, as `learning.snapshot` counts them. */
-  learning: LearningCounts,
 };
 
 const LOCAL_HOST_DOCUMENT_KEYS = {

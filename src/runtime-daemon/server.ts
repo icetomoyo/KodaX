@@ -25,8 +25,6 @@ import {
   emitKodaXDiagnostic,
   ExternalAgentRegistrationConflictError,
   isCurrentProcessWindowsJobContained,
-  LearningCapabilityError,
-  type LearningCapabilityErrorCode,
 } from "@kodax-ai/agent";
 import type {
   ProviderCredentialAttribution,
@@ -75,7 +73,6 @@ import type {
   RuntimeWorkflowFilter,
   RuntimeWorkflowStartInput,
 } from "../sdk-runtime.js";
-import { bindRuntimeLearningClient } from "../runtime-learning.js";
 import { sandboxRuntimeCapability } from "../sandbox-runtime.js";
 import {
   createRuntimeDaemonErrorResponse,
@@ -221,8 +218,6 @@ const ALL_RUNTIME_GRANTED_SCOPES = [
   "permission:grant-admin",
   "integration:admin",
   "workflow:control",
-  "learning:read",
-  "learning:control",
   "artifact:write",
   "agent:control",
   "credential:register",
@@ -397,24 +392,6 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "workflow.resume",
     "workflow.stop",
     "workflow.start",
-  ]),
-  ...scopeEntries("learning:read", [
-    "learning.list",
-    "learning.get",
-    "learning.snapshot",
-    "learning.events",
-    "learning.subscribe",
-    "learning.unsubscribe",
-  ]),
-  ...scopeEntries("learning:control", [
-    "learning.acknowledge",
-    "learning.snooze",
-    "learning.reject",
-    "learning.disable",
-    "learning.rollback",
-    "learning.promote",
-    "learning.review",
-    "learning.trust",
   ]),
   ...scopeEntries("artifact:write", ["artifact.create", "artifact.delete"]),
   ...scopeEntries("agent:control", [
@@ -2480,114 +2457,6 @@ async function dispatchRuntimeDaemonRequest(
       return runtime.workflows.start(trusted as unknown as RuntimeWorkflowStartInput);
     }
 
-    case "learning.list":
-      return bindRuntimeLearningClient(runtime.learning, noticeIdentity).list(
-        optionalRecord(request.params) as Parameters<
-          KodaXRuntime["learning"]["list"]
-        >[0],
-      );
-    case "learning.get":
-      return bindRuntimeLearningClient(runtime.learning, noticeIdentity).get(
-        requireStringParam(request.params, "nameOrSlug"),
-      );
-    case "learning.snapshot":
-      return bindRuntimeLearningClient(
-        runtime.learning,
-        noticeIdentity,
-      ).getSnapshot();
-    case "learning.events":
-      return bindRuntimeLearningClient(runtime.learning, noticeIdentity).events(
-        optionalIntegerField(
-          optionalRecord(request.params) ?? {},
-          "afterRevision",
-        ),
-      );
-    case "learning.subscribe": {
-      const params = optionalRecord(request.params) ?? {};
-      const subscriptionId = createSubscriptionId();
-      const stream = bindRuntimeLearningClient(runtime.learning, noticeIdentity).subscribe({
-        afterRevision: optionalIntegerField(params, "afterRevision"),
-      });
-      const iterator = stream[Symbol.asyncIterator]();
-      let active = true;
-      rememberSubscription(subscriptionId, { close: () => {
-        active = false;
-        void iterator.return?.().catch((error: unknown) => {
-          emitKodaXDiagnostic({ source: 'runtime.daemon.server', level: 'warn',
-            message: 'Failed to close Learning observation.', detail: String(error) });
-        });
-      } });
-      await stream.ready;
-      void (async () => {
-        try {
-          while (active) {
-            const next = await iterator.next();
-            if (!active) return;
-            if (next.done) throw new Error('Learning observation ended.');
-            notify(subscriptionId, next.value);
-          }
-        } catch (error: unknown) {
-          if (!active) return;
-          closeSubscription(subscriptionId);
-          reportSubscriptionFailure(options, params, subscriptionId, error);
-        }
-      })();
-      return { subscriptionId };
-    }
-    case "learning.unsubscribe":
-      return {
-        ok: closeSubscription(requireStringParam(request.params, "subscriptionId")),
-      };
-    case "learning.acknowledge":
-      await bindRuntimeLearningClient(
-        runtime.learning,
-        noticeIdentity,
-      ).acknowledge(requireStringParam(request.params, "nameOrSlug"));
-      return { ok: true };
-    case "learning.snooze": {
-      const params = requireRecord(request.params);
-      await bindRuntimeLearningClient(runtime.learning, noticeIdentity).snooze(
-        requireStringField(params, "nameOrSlug"),
-        requireStringField(params, "until"),
-      );
-      return { ok: true };
-    }
-    case "learning.reject":
-    case "learning.disable":
-    case "learning.rollback":
-    case "learning.review":
-    case "learning.trust": {
-      const learning = bindRuntimeLearningClient(runtime.learning, noticeIdentity);
-      const params = requireRecord(request.params);
-      const nameOrSlug = requireStringField(params, "nameOrSlug");
-      const ifRevision = optionalIntegerField(params, "ifRevision");
-      if (request.method === "learning.reject")
-        await learning.reject(nameOrSlug, ifRevision);
-      else if (request.method === "learning.disable")
-        await learning.disable(nameOrSlug, ifRevision);
-      else if (request.method === "learning.rollback")
-        await learning.rollback(nameOrSlug, ifRevision);
-      else if (request.method === "learning.review")
-        await learning.review(nameOrSlug, ifRevision);
-      else await learning.trust(nameOrSlug, ifRevision);
-      return { ok: true };
-    }
-    case "learning.promote": {
-      const params = requireRecord(request.params);
-      const scope = requireStringField(params, "scope");
-      if (scope !== "user")
-        throw daemonError(
-          "invalid_params",
-          "Learning promotion scope must be user.",
-        );
-      await bindRuntimeLearningClient(runtime.learning, noticeIdentity).promote(
-        requireStringField(params, "nameOrSlug"),
-        scope,
-        optionalIntegerField(params, "ifRevision"),
-      );
-      return { ok: true };
-    }
-
     default:
       throw daemonError(
         "method_not_found",
@@ -3250,15 +3119,6 @@ function runtimeDaemonCapabilities(
       ambiguityReporting: true,
       topologyTransparentManagedContext: true,
       directCloneProvenance: true,
-    },
-    learningCenter: { version: 1 },
-    skillLearningLoop: {
-      version: 1,
-      activation: "project_scoped_canary",
-      immutableDecisions: true,
-      recordGatedDiscovery: true,
-      exactUseAttribution: true,
-      rollback: true,
     },
     askUserTransport: { version: 1 },
     permissionCas: { version: 1 },
@@ -4249,19 +4109,6 @@ const RUNTIME_FAILURE_CODES: Readonly<Record<
   message_cycle_detected: 'invalid_params',
 };
 
-// A decision the person made against a capability that cannot take it is not the Host failing.
-const LEARNING_FAILURE_CODES: Readonly<Record<LearningCapabilityErrorCode, RuntimeDaemonErrorCode>> = {
-  capability_not_found: 'not_found',
-  ambiguous_name: 'invalid_params',
-  invalid_transition: 'conflict',
-  unsupported_action: 'conflict',
-  revision_conflict: 'conflict',
-  store_integrity_error: 'data_corrupt',
-  // Also raised by the learning store's own checks, so it says nothing about the caller.
-  invalid_record: 'internal_error',
-  action_failed: 'internal_error',
-};
-
 function normalizeRuntimeDaemonError(error: unknown): {
   readonly code: RuntimeDaemonErrorCode;
   readonly message: string;
@@ -4284,14 +4131,6 @@ function normalizeRuntimeDaemonError(error: unknown): {
         expectedRevision: conflict.expectedRevision,
         currentRevision: conflict.currentRevision,
       },
-    };
-  }
-  if (error instanceof LearningCapabilityError) {
-    const code = LEARNING_FAILURE_CODES[error.code];
-    return {
-      code,
-      message: error.message,
-      data: code === "conflict" ? { conflict: error.code } : { reason: error.code },
     };
   }
   if (error instanceof ExternalAgentRegistrationConflictError) {

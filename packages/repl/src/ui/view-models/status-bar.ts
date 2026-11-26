@@ -402,7 +402,6 @@ function buildStatusBarSegments(props: StatusBarProps): StatusBarSegment[] {
     toolInputContent,
     contextUsage,
     contextTokens,
-    learning,
     showBusyStatus = true,
     managedPhase,
     managedHarnessProfile,
@@ -528,20 +527,6 @@ function buildStatusBarSegments(props: StatusBarProps): StatusBarSegment[] {
 
   if (contextTokens) {
     segments.push({ id: 'context-quantity', text: `${contextTokens.scope} ctx ${formatTokenCount(contextTokens.currentTokens)}`, color: 'dim' });
-  }
-
-  if (learning && (learning.ready > 0 || learning.newlyActive > 0 || learning.attention > 0)) {
-    const parts = [
-      ...(learning.ready > 0 ? [`${learning.ready}R`] : []),
-      ...(learning.newlyActive > 0 ? [`${learning.newlyActive}N`] : []),
-      ...(learning.attention > 0 ? [`${learning.attention}!`] : []),
-    ];
-    segments.push({
-      id: "learning",
-      text: `Learn:${parts.join("/")}`,
-      color: learning.attention > 0 || learning.ready > 0 ? "yellow" : "cyan",
-      tone: learning.attention > 0 || learning.ready > 0 ? "warning" : "accent",
-    });
   }
 
   if (tokenUsage) {

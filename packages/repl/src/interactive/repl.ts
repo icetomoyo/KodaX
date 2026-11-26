@@ -89,7 +89,6 @@ import {
   createStandaloneShellPermissionBoundary,
   type StandaloneExecPolicyOptions,
 } from '../permission/standalone-shell-boundary.js';
-import { formatLearningRecoverySummary } from '../ui/view-models/learning-summary.js';
 import { createBashPrefixExtractor, type BashPrefixExtractor } from '@kodax-ai/coding';
 import { bootstrapTeamMode, type TeamModeHandle, type WorkflowProcessEvent } from '@kodax-ai/agent';
 import {
@@ -135,7 +134,6 @@ import type {
   RuntimeSurfaceStatus,
   SessionRecoverStatus,
 } from '../commands/types.js';
-import type { LearningBinding } from '../ui/types.js';
 import { loadCompactionConfig } from '../common/compaction-config.js';
 import { loadAlwaysAllowTools, loadAutoModeSettings, saveAlwaysAllowToolPattern } from '../common/permission-config.js';
 import {
@@ -529,7 +527,6 @@ export interface RepLOptions extends KodaXOptions {
   validateSetupA2AConfig?: (value: unknown) => unknown;
   prepareSetupSandbox?: CommandCallbacks['prepareSetupSandbox'];
   inspectSandbox?: CommandCallbacks['inspectSandbox'];
-  learning?: LearningBinding;
   /** FEATURE_298 T22 — Host workflow plane; required for start/control. */
   workflows?: CommandCallbacks['workflows'];
   commandClient?: CommandCallbacks['commandClient'];
@@ -806,19 +803,6 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     enabled: compactionConfig.enabled,
   }, agentsFiles);
   printWorkspaceEntryNotice(activeRuntime);
-  if (options.learning) {
-    try {
-      const recovery = formatLearningRecoverySummary(await options.learning.getSnapshot());
-      if (recovery) console.log(chalk.yellow(`\n${recovery}\n`));
-    } catch (error: unknown) {
-      emitKodaXDiagnostic({
-        source: 'repl:learning',
-        level: 'warn',
-        message: 'Failed to recover the Learning Center startup summary.',
-        detail: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
 
   // Detect and show project hint - 检测并显示项目提示
 
@@ -1361,8 +1345,6 @@ Keyboard Shortcuts:
     validateSetupA2AConfig: options.validateSetupA2AConfig,
     prepareSetupSandbox: options.prepareSetupSandbox,
     inspectSandbox: options.inspectSandbox,
-    learning: options.learning,
-    getLearningSummary: options.learning ? () => options.learning!.getSnapshot() : undefined,
     workflows: options.workflows ? { ...options.workflows,
       start: withObservedExecution(ensurePlaneObservation, options.workflows.start.bind(options.workflows)),
       resume: withObservedExecution(ensurePlaneObservation, options.workflows.resume.bind(options.workflows)) } : undefined,

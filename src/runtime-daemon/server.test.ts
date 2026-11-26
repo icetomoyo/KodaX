@@ -5,7 +5,6 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ExternalAgentRegistrationConflictError,
-  LearningCapabilityError,
   setKodaXDiagnosticSink,
 } from '@kodax-ai/agent';
 import {
@@ -133,29 +132,6 @@ describe('runtime daemon dispatcher', () => {
       release();
       expect(await pending).toMatchObject({ kind: 'error', error: { code: 'read_cancelled' } });
     } finally { release(); await pending; dispatcher.close(); }
-  });
-
-  it('waits for Learning service readiness and releases a failed registration', async () => {
-    const runtime = makeRuntime();
-    let fail!: (error: unknown) => void;
-    const ready = new Promise<void>((_resolve, reject) => { fail = reject; });
-    const close = vi.fn(async () => ({ done: true as const, value: undefined }));
-    vi.spyOn(runtime.learning, 'subscribe').mockReturnValue({ ready,
-      [Symbol.asyncIterator]() { return this; },
-      next: async () => ({ done: true, value: undefined }), return: close,
-    });
-    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
-    try {
-      await initializeDispatcher(dispatcher);
-      let acknowledged = false;
-      const registration = dispatcher.handle(createRuntimeDaemonRequest('learning-ready', 'learning.subscribe', { reportErrors: true }))
-        .then((response) => { acknowledged = true; return response; });
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      expect(acknowledged).toBe(false);
-      fail(new Error('backend registration failed'));
-      expect(await registration).toMatchObject({ kind: 'error', error: { message: 'backend registration failed' } });
-      expect(close).toHaveBeenCalledTimes(1);
-    } finally { dispatcher.close(); }
   });
 
   it('does not let an observe-only client execute dynamic Skill preparation', async () => {
@@ -2377,14 +2353,6 @@ describe('runtime daemon dispatcher', () => {
             topologyTransparentManagedContext: true,
             directCloneProvenance: true,
           },
-          skillLearningLoop: {
-            version: 1,
-            activation: 'project_scoped_canary',
-            immutableDecisions: true,
-            recordGatedDiscovery: true,
-            exactUseAttribution: true,
-            rollback: true,
-          },
           askUserTransport: { version: 1 },
           permissionCas: { version: 1 },
           providerCredentialBroker: {
@@ -3203,66 +3171,6 @@ describe('runtime daemon dispatcher', () => {
     dispatcher.close();
   });
 
-  it('accepts only explicit user-scope learned Skill promotion over the daemon boundary', async () => {
-    const runtime = makeRuntime();
-    const promote = vi.spyOn(runtime.learning, 'promote');
-    const dispatcher = createRuntimeDaemonDispatcher({
-      role: 'owner',
-      runtime,
-      grantedScopes: ['learning:control'],
-    });
-    await initializeDispatcher(dispatcher);
-
-    const accepted = await dispatcher.handle(createRuntimeDaemonRequest(
-      'req-learning-promote-user',
-      'learning.promote',
-      { nameOrSlug: 'runtime-test-skill', scope: 'user', ifRevision: 4 },
-    ));
-    const rejected = await dispatcher.handle(createRuntimeDaemonRequest(
-      'req-learning-promote-project',
-      'learning.promote',
-      { nameOrSlug: 'runtime-test-skill', scope: 'project' },
-    ));
-
-    expect(isRuntimeDaemonSuccessResponse(accepted)).toBe(true);
-    expect(promote).toHaveBeenCalledTimes(1);
-    expect(promote).toHaveBeenCalledWith('runtime-test-skill', 'user', 4);
-    expect(isRuntimeDaemonSuccessResponse(rejected)).toBe(false);
-    if (!isRuntimeDaemonSuccessResponse(rejected)) {
-      expect(rejected.error).toMatchObject({
-        code: 'invalid_params',
-        message: 'Invalid params for learning.promote.',
-      });
-      expect(rejected.error.data).toMatchObject({
-        issues: ['params.scope must be one of: user.'],
-      });
-    }
-    dispatcher.close();
-  });
-
-  it.each([
-    ['capability_not_found', 'not_found', { reason: 'capability_not_found' }],
-    ['ambiguous_name', 'invalid_params', { reason: 'ambiguous_name' }],
-    ['invalid_transition', 'conflict', { conflict: 'invalid_transition' }],
-    ['unsupported_action', 'conflict', { conflict: 'unsupported_action' }],
-    ['revision_conflict', 'conflict', { conflict: 'revision_conflict' }],
-    ['store_integrity_error', 'data_corrupt', { reason: 'store_integrity_error' }],
-    ['invalid_record', 'internal_error', { reason: 'invalid_record' }],
-  ] as const)('reports a learning %s as %s, not as the Host failing', async (learningCode, code, data) => {
-    const runtime = makeRuntime();
-    vi.spyOn(runtime.learning, 'trust').mockRejectedValue(new LearningCapabilityError(learningCode, 'refused'));
-    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime, grantedScopes: ['learning:control'] });
-    await initializeDispatcher(dispatcher);
-
-    const response = await dispatcher.handle(createRuntimeDaemonRequest(
-      'req-learning-trust', 'learning.trust', { nameOrSlug: 'runtime-test-skill' },
-    ));
-
-    expect(isRuntimeDaemonSuccessResponse(response)).toBe(false);
-    if (!isRuntimeDaemonSuccessResponse(response)) expect(response.error).toEqual({ code, message: 'refused', data });
-    dispatcher.close();
-  });
-
   it('gates context diagnostic events in live notifications by negotiated capability', async () => {
     const runtime = makeRuntime();
     const basicNotifications: RuntimeDaemonNotification[] = [];
@@ -3726,8 +3634,6 @@ const METHOD_SMOKE_PARAMS = {
   'workflow.get': { runId: 'run-1' },
   'workflow.subscribe': { filter: { runId: 'run-1' } },
   'workflow.unsubscribe': { subscriptionId: 'workflow-sub-missing' },
-'learning.subscribe': {},
-'learning.unsubscribe': { subscriptionId: 'learning-sub-missing' },
   'workflow.pause': { runId: 'run-1' },
   'workflow.resume': { runId: 'run-1' },
   'workflow.stop': { runId: 'run-1' },
@@ -3735,18 +3641,6 @@ const METHOD_SMOKE_PARAMS = {
     projectRoot: '/tmp/kodax-smoke',
     source: { kind: 'name', name: 'smoke' },
   },
-  'learning.list': {},
-  'learning.get': { nameOrSlug: 'runtime-test-skill' },
-  'learning.snapshot': undefined,
-  'learning.events': { afterRevision: 0 },
-  'learning.acknowledge': { nameOrSlug: 'runtime-test-skill' },
-  'learning.snooze': { nameOrSlug: 'runtime-test-skill', until: '2026-07-18T00:00:00.000Z' },
-  'learning.reject': { nameOrSlug: 'runtime-test-skill' },
-  'learning.disable': { nameOrSlug: 'runtime-test-skill' },
-  'learning.rollback': { nameOrSlug: 'runtime-test-skill' },
-  'learning.promote': { nameOrSlug: 'runtime-test-skill', scope: 'user' },
-  'learning.review': { nameOrSlug: 'runtime-test-skill' },
-  'learning.trust': { nameOrSlug: 'runtime-test-skill' },
   'config.read': undefined,
   'config.effective': undefined,
   'config.patch': { patch: { model: 'mock-model' } },
@@ -4241,38 +4135,6 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
       forProject() {
         return createTestMemoryPlane();
       },
-    },
-    learning: {
-      async list() {
-        return { items: [], revision: 0 };
-      },
-      async get(nameOrSlug) {
-        return {
-          schemaVersion: 1,
-          capabilityId: 'lc_runtime_test',
-          displayName: 'Runtime test Skill',
-          slug: nameOrSlug,
-          carrier: 'skill',
-          lifecycle: 'ready',
-          revision: 1,
-          createdAt: '2026-07-17T00:00:00.000Z',
-          updatedAt: '2026-07-17T00:00:00.000Z',
-          source: { kind: 'learning_controller' },
-        };
-      },
-      async getSnapshot() {
-        return { ready: 0, newlyActive: 0, attention: 0, active: 0, revision: 0 };
-      },
-      async events() { return []; },
-      subscribe() { return Object.assign((async function* () {})(), { ready: Promise.resolve() }); },
-      async acknowledge() {},
-      async snooze() {},
-      async reject() {},
-      async disable() {},
-      async rollback() {},
-      async promote() {},
-      async review() {},
-      async trust() {},
     },
     invocations: {
       async readCommandPrompt() { return null; },

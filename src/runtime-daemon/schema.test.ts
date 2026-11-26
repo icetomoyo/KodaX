@@ -473,65 +473,6 @@ describe('runtime daemon protocol schema', () => {
     })).toEqual([]);
   });
 
-  it('carries complete F263 learned Skill records across Worker and daemon facades', () => {
-    const record = {
-      schemaVersion: 2,
-      capabilityId: 'lc_runtime_promote',
-      displayName: 'Runtime promote Skill',
-      slug: 'runtime-promote-skill',
-      carrier: 'skill',
-      lifecycle: 'active_learned',
-      revision: 2,
-      createdAt: '2026-07-29T00:00:00.000Z',
-      updatedAt: '2026-07-29T00:01:00.000Z',
-      source: { kind: 'skill_learning_loop' },
-      scope: {
-        configHomeHash: 'a'.repeat(64),
-        tenantHash: 'b'.repeat(64),
-        projectHash: 'c'.repeat(64),
-      },
-      artifact: {
-        kind: 'skill_markdown',
-        relativePath: 'skills/lc_runtime_promote/revisions/fingerprint/SKILL.md',
-        fingerprint: 'd'.repeat(64),
-        contentRevision: 1,
-      },
-      provenance: {
-        jobId: 'job-1',
-        inputHash: 'e'.repeat(64),
-        decisionId: 'decision-1',
-        actionId: 'action-1',
-      },
-      canary: {
-        maxInvocations: 3,
-        invocationCount: 1,
-        verifiedSuccesses: 1,
-        credibleNegatives: 0,
-        invocations: [{
-          invocationId: 'invocation-1',
-          bindingId: 'binding-1',
-          status: 'verified_success',
-          evidenceRefs: ['check:1'],
-          invokedAt: '2026-07-29T00:00:30.000Z',
-          completedAt: '2026-07-29T00:00:45.000Z',
-        }],
-      },
-    };
-
-    expect(validateRuntimeDaemonJsonSchema(
-      RUNTIME_DAEMON_METHOD_SCHEMAS['learning.get'].result,
-      record,
-    )).toEqual([]);
-    expect(validateRuntimeDaemonJsonSchema(
-      RUNTIME_DAEMON_METHOD_SCHEMAS['learning.list'].result,
-      { items: [record], revision: 2 },
-    )).toEqual([]);
-    expect(validateRuntimeDaemonJsonSchema(
-      RUNTIME_DAEMON_METHOD_SCHEMAS['learning.promote'].params,
-      { nameOrSlug: record.slug, scope: 'project' },
-    )).toContain('$.scope must be one of: user.');
-  });
-
   it('validates registration ownership and revision-CAS mutation fields', () => {
     const schema = RUNTIME_DAEMON_METHOD_SCHEMAS['agentRegistrations.setEnabled'].params;
     expect(validateRuntimeDaemonJsonSchema(schema, {

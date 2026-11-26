@@ -737,7 +737,7 @@
       "Text after the selected token is the Skill argument.",
       "`disable-model-invocation` does not hide those explicit tokens.",
       "See the skills topic for model discovery versus explicit invocation.",
-      "- governance/work: /memory, /learn, /goal, /review, /workflow, /stall-log.",
+      "- governance/work: /memory, /goal, /review, /workflow, /stall-log.",
       "Setup: `/setup` initializes missing config files and chooses a provider;",
       "`/setup --custom` opens the explained custom-provider writer, while",
       "`/setup --help` displays the complete shared guide without changing files. Setup also",
@@ -1005,41 +1005,12 @@
       "",
       "Versus AGENTS.md — AGENTS.md",
       "sets repo-wide rules always in context; a skill is task-specific and loaded when needed.",
-      "With the note memory (the default), the background reflection after a run may propose a skill",
-      "for a procedure whose success the session output proves; it is saved as ready in the project's",
-      "learned area and is used only after the user trusts it with /learn trust.",
-      "With KODAX_MEMORY_NOTES=0 the legacy learning path applies instead:",
-      "Background learning is Memory first: one correction or recovery is evidence, not permission",
-      "to create a Skill. Repeated independently verified evidence, or an explicit preserve-as-Skill",
-      "request with verified terminal evidence, may create a low-risk declarative Skill as an",
-      "immutable project-scoped testing revision backed by the canonical Learning Center record.",
-      "Testing is a bounded canary: at most one concurrent root binding and three exact-revision invocations.",
-      "Automatic canary activation waits until all three outcomes settle and requires independently verified success",
-      "in at least one. A credible negative quarantines immediately; an exhausted canary without success returns",
-      "the revision to Ready/attention. Inspect, disable, rollback, trust, or reject it with /learn.",
-      "Use `/learn promote <name|slug|capability-id> --scope user` for a reviewed ready or active_learned",
-      "revision. KodaX verifies the exact fingerprint and publishes `SKILL.md` atomically to",
-      "the formal user catalog without overwriting a different existing Skill; repeating the",
-      "same promotion is idempotent.",
-      "Protected/formal Skills, global promotion, and Extension authoring remain manual; background",
-      "learning cannot shadow formal Skills, broaden authority, or auto-create an Extension."
+      "KodaX does not write Skills on its own; a Skill exists only when someone writes or installs it."
     ],
     "sources": [
       {
         "label": "skills",
         "path": "packages/agent/src/capabilities/skills/"
-      },
-      {
-        "label": "learning",
-        "path": "packages/agent/src/learning/"
-      },
-      {
-        "label": "reviewer",
-        "path": "packages/coding/src/learning-reviewer.ts"
-      },
-      {
-        "label": "Learning Center command",
-        "path": "packages/repl/src/commands/learn-command.ts"
       }
     ],
     "nextTopics": [
@@ -1488,10 +1459,9 @@
       "Secrets are refused.",
       "",
       "After a top-level run ends, a background reflection reads the session and may save the user's",
-      "corrections, corroborate or dispute existing notes, and propose a skill for a procedure that",
-      "verifiably worked. It makes at most ten model calls a day, never runs through a CLI bridge",
-      "provider, and is skipped when an embedding host supplies its own learning reviewer. A proposed",
-      "skill waits as ready in the project's learned area until the user trusts it with /learn trust.",
+      "corrections and corroborate or dispute existing notes. It makes at most ten model calls a day,",
+      "never runs through a CLI bridge provider, and is skipped when an embedding host supplies its",
+      "own learning reviewer.",
       "Inferred notes nobody confirmed or used for 90 days are archived; notes with the same",
       "description are merged.",
       "",
@@ -1732,11 +1702,6 @@
       "bundles lazy Anthropic/OpenAI SDK dependency graphs in standalone binaries.",
       "AskUser and permission prompts have independent policies and owner AbortSignals. Ordinary questions wait indefinitely by default and allow explicit skip. Skip or Host timeout returns unanswered; only Stop interrupts the Run, and defaults are never submitted automatically. MCP reverse elicitation cancels through the same signal. `reclaimStaleKodaXFileLock` is the public Agent helper for an explicitly identified stale learning lock; it is not a general lock deletion primitive.",
       "Configure `userInputTimeoutMs` independently from `permissionTimeoutMs`; both are validated before embedded, Worker, or daemon startup. Both accept 0 to disable their timer; user input defaults to 0, while permission timeout retains its five-minute default.",
-      "Require `learningCenter:1` and `skillLearningLoop:1` when a host depends on the complete",
-      "F263 project-canary contract. `runtime.learning` exposes list/get/snapshot/events/subscribe",
-      "plus explicit acknowledge, snooze, reject, disable, rollback, review, trust, and user-scope",
-      "promotion controls. Inventory and lifecycle state remain Runtime-owned; clients render",
-      "the Learning Center and never infer activation from files alone.",
       "Packaged/asar Electron hosts may use daemon auto-start when the default-enabled",
       "RunAsNode fuse is available. `homeDir` is the CLI-style base directory that owns",
       "`.kodax`; `KODAX_HOME` is the lower-level `.kodax` path. ELECTRON_RUN_AS_NODE exists",

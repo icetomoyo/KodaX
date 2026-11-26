@@ -15846,57 +15846,6 @@ describe("createKodaXRuntime", () => {
     await expect(handle.result).resolves.toMatchObject({ phase: "unknown" });
   });
 
-  it("advertises and negotiates the complete Skill Learning Loop contract inline", async () => {
-    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
-    const runtime = await createKodaXRuntime({
-      mode: "embedded",
-      homeDir: tempRoot,
-      requirements: { skillLearningLoop: 1 },
-    });
-
-    expect(runtime.capabilities?.skillLearningLoop).toEqual({
-      version: 1,
-      activation: "project_scoped_canary",
-      immutableDecisions: true,
-      recordGatedDiscovery: true,
-      exactUseAttribution: true,
-      rollback: true,
-    });
-    await runtime.close();
-  });
-
-  it("fails closed when a connected Runtime lacks the complete Skill Learning Loop", async () => {
-    const { connectKodaXRuntime } = await import("../tests/runtime-fixture.js");
-    const transport: RuntimeDaemonClientTransport = {
-      async request(method) {
-        if (method !== "initialize") return null;
-        return {
-          identity: {
-            runtimeId: "daemon-with-learning-center-only",
-            mode: "daemon",
-            profile: "default",
-            startedAt: "2026-07-27T00:00:00.000Z",
-            version: KODAX_VERSION,
-          },
-          capabilities: {
-            ...SESSION_EVENT_JOURNAL_CAPABILITY,
-            learningCenter: { version: 1 },
-          },
-        };
-      },
-      subscribe() {
-        return { close() {} };
-      },
-    };
-
-    await expect(
-      connectKodaXRuntime({
-        transport,
-        requirements: { skillLearningLoop: 1 },
-      }),
-    ).rejects.toThrow(/does not support.*skillLearningLoop/i);
-  });
-
   it("keeps managed prompt-cache affinity stable after Runtime reconnect without crossing Sessions", async () => {
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionsDir = path.join(tempRoot, "affinity-sessions");

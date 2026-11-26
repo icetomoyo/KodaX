@@ -398,26 +398,6 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('remains open after v0.7.87');
   });
 
-  it('documents the v0.7.78 evidence-gated background Skill learning boundary', () => {
-    const content = resolveKodaXManual({ topic: 'skills' }).content;
-
-    expect(content).toContain('Memory first');
-    expect(content).toContain('project-scoped');
-    expect(content).toContain('three exact-revision invocations');
-    expect(content).toContain('all three outcomes settle');
-    expect(content).toContain('independently verified success');
-    expect(content).toContain('credible negative quarantines immediately');
-    expect(content).toContain('/learn');
-    expect(content).toMatch(/protected\/formal/i);
-    expect(content).toContain('global promotion');
-    expect(content).toContain('Extension');
-    expect(content).toContain('/learn promote');
-    expect(content).toContain('--scope user');
-    expect(content).toContain('ready or active_learned');
-    expect(content).toContain('atomically');
-    expect(content).toContain('without overwriting');
-  });
-
   it('documents explicit user invocation separately from model Skill discovery', () => {
     const content = resolveKodaXManual({ topic: 'skills' }).content;
     const commands = resolveKodaXManual({ topic: 'commands' }).content;
@@ -613,8 +593,8 @@ describe('FEATURE_218 manual registry', () => {
     expect(content).toContain('server.whenReady()');
     expect(content).toContain('sessions.observe()');
     expect(content).toContain('run-bound Host Tools');
-    expect(content).toContain('runtime.learning');
-    expect(content).toContain('skillLearningLoop');
+    expect(content).not.toContain('runtime.learning');
+    expect(content).not.toContain('skillLearningLoop');
     expect(content).toContain('loopback identity challenge');
     expect(content).toMatch(/reuses\s+the PID/);
   });

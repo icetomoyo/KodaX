@@ -151,33 +151,6 @@ describe('ArgumentCompleter', () => {
       });
     });
 
-    describe('/learn command', () => {
-      it('advertises promotion and its dedicated help path', async () => {
-        const subcommands = await completer.getCompletions('/learn ', 7);
-        const helpTopics = await completer.getCompletions('/learn help ', 12);
-
-        expect(subcommands.map((completion) => completion.display)).toContain('promote');
-        expect(subcommands.map((completion) => completion.display)).toContain('ready');
-        expect(subcommands.find((completion) => completion.display === 'pending')?.description)
-          .toContain('alias for ready');
-        expect(helpTopics.map((completion) => completion.display)).toEqual(['promote']);
-      });
-
-      it('completes the only supported promotion scope', async () => {
-        const options = await completer.getCompletions(
-          '/learn promote release-check ',
-          29,
-        );
-        const scopes = await completer.getCompletions(
-          '/learn promote release-check --scope ',
-          37,
-        );
-
-        expect(options.map((completion) => completion.display)).toContain('--scope');
-        expect(scopes.map((completion) => completion.display)).toEqual(['user']);
-      });
-    });
-
     describe('/reasoning command', () => {
       it('should return reasoning arguments for /reasoning with a space', async () => {
         const completions = await completer.getCompletions('/reasoning ', 11);

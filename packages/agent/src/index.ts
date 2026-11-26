@@ -656,7 +656,6 @@ export * from './memory-store/index.js';
 // substrate. Owns learning intake, skill governance, and safe skill proposal
 // apply primitives; workflow and memory mutation remain destination-specific.
 export type {
-  ApproveStoredLearningProposalOptions,
   CompletedTurnLearningCandidate,
   CompletedTurnLearningInput,
   CompletedTurnLearningRecordResult,
@@ -689,7 +688,6 @@ export type {
   SkillMutationApplyResult,
   SkillMutationChange,
   SkillOwnership,
-  SkillSnapshotLocation,
   SkillTrustLedgerReadResult,
   SkillTrustRecord,
   SkillTrustState,
@@ -702,7 +700,6 @@ export type {
   SkillUsageRecordResult,
   SkillWriteOrigin,
   StoredLearningApplyPlan,
-  StoredLearningApprovalResult,
   StoredLearningProposal,
   StoredSkillLearningApplyPlan,
   TraceOnlyLearningReport,
@@ -710,13 +707,7 @@ export type {
   WorkflowLearningSuggestedAction,
 } from './learning/index.js';
 export {
-  MAX_SKILL_MD_BYTES,
-  MAX_SKILL_SUPPORT_FILE_BYTES,
-  applySkillLearningProposal,
-  approveStoredLearningProposal,
-  canMarkCreatedByAgent,
   computeSkillConsumerImpact,
-  decideSkillGovernance,
   readLearningProposalStore,
   readSkillTrustLedger,
   readSkillUsageLedger,
@@ -724,7 +715,6 @@ export {
   recordProceduralLearning,
   recordSkillUsage,
   resolveLearningProposalStore,
-  resolveSkillSnapshotLocation,
   resolveSkillTrustLedger,
   resolveSkillUsageLedger,
   triageProceduralLearning,
@@ -733,8 +723,6 @@ export {
   upsertLearningProposal,
 } from './learning/index.js';
 export type {
-  CreateLearningCenterServiceOptions,
-  CreateLearnedSkillActionDriverOptions,
   CreateLearnedSkillRecordInput,
   CommitLearnedSkillRevisionInput,
   DeclarativeSkillSpec,
@@ -761,7 +749,6 @@ export type {
   LearningAction,
   LearningActionDriver,
   LearningCapabilityErrorCode,
-  LearningCenterService,
   LearningClientEventState,
   LearningClientRecord,
   LearningEvent,
@@ -769,7 +756,6 @@ export type {
   LearningEventKind,
   LearningNotificationState,
   LearningPage,
-  LearningProposalProjection,
   LearningQuery,
   LearningSubscribeOptions,
   LearningSurfaceSnapshot,
@@ -783,13 +769,10 @@ export {
   commitLearnedSkillRevision,
   createLearnedCapabilityScope,
   createLearnedSkillRecord,
-  FileLearningCenterService,
   LearnedAreaStore,
   LearningCapabilityError,
   assertLearnedCapabilityTransition,
   canTransitionLearnedCapability,
-  createLearningCenterService,
-  createLearnedSkillActionDriver,
   importApprovedLearnedSkills,
   eventFromCapability,
   getLearnedExtensionToolName,
@@ -808,7 +791,6 @@ export {
   resolveProjectLearnedAreaRoot,
   stageLearnedSkillRevision,
   validateDeclarativeSkillSpec,
-  projectLearningProposals,
   resolveLearnedAreaPaths,
   slugifyLearnedCapabilityName,
 } from './learning/index.js';

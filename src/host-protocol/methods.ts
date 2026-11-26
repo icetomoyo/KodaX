@@ -16,7 +16,6 @@ import { HOST_PROTOCOL } from './codec.js';
 import { HISTORY_METHODS } from './history.js';
 import { HOST_ADMIN_METHODS } from './host.js';
 import { INTERACTION_METHODS } from './interaction.js';
-import { LEARNING_METHODS } from './learning.js';
 import { LEASE_METHODS } from './lease.js';
 import { MCP_METHODS } from './mcp.js';
 import { MEMORY_METHODS } from './memory.js';
@@ -132,7 +131,6 @@ export const HOST_METHODS = {
   ...CONFIG_METHODS,
   ...MCP_METHODS,
   ...EXTENSION_METHODS,
-  ...LEARNING_METHODS,
   ...MEMORY_METHODS,
   ...LEASE_METHODS,
 } as const satisfies HostMethodRegistry;

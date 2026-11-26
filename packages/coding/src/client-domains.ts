@@ -4,8 +4,6 @@ import type {
   MemoryBodySnapshot, MemoryItemRef, MemoryLifecycleOperationResult,
   MemoryRefFilter, MemoryRejectResult, MemoryRememberInput, MemoryRememberResult,
   PendingEpisodeReviewSummary,
-  LearnedCapabilityRecord, LearningEvent, LearningPage, LearningQuery,
-  LearningSubscribeOptions, LearningSurfaceSnapshot,
 } from '@kodax-ai/agent';
 
 export interface ClientCompactSessionResult {
@@ -59,28 +57,6 @@ export interface ClientMemoryPlane {
 export interface ClientMemoryService {
   /** Host derives the project identity and rechecks authorization for each operation. */
   forProject(projectRoot: string): Promise<ClientMemoryPlane>;
-}
-
-/** Learning notifications belong to the authenticated client; governance is shared. */
-export interface ClientLearningSubscription extends AsyncIterableIterator<LearningEvent> {
-  /** Registration only; read a snapshot after awaiting ready. */
-  readonly ready: Promise<void>;
-}
-
-export interface ClientLearningService {
-  list(query?: LearningQuery): Promise<LearningPage>;
-  get(nameOrSlugOrId: string): Promise<LearnedCapabilityRecord>;
-  getSnapshot(): Promise<LearningSurfaceSnapshot>;
-  events(afterRevision?: number): Promise<readonly LearningEvent[]>;
-  subscribe(options?: LearningSubscribeOptions): ClientLearningSubscription;
-  acknowledge(nameOrSlugOrId: string): Promise<void>;
-  snooze(nameOrSlugOrId: string, until: string): Promise<void>;
-  reject(nameOrSlugOrId: string): Promise<void>;
-  disable(nameOrSlugOrId: string): Promise<void>;
-  rollback(nameOrSlugOrId: string): Promise<void>;
-  promote(nameOrSlugOrId: string, scope: 'user'): Promise<void>;
-  review(nameOrSlugOrId: string): Promise<void>;
-  trust(nameOrSlugOrId: string): Promise<void>;
 }
 
 export interface ClientCommandInput {

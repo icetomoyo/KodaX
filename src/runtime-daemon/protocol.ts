@@ -109,20 +109,6 @@ export type RuntimeDaemonMethod =
   | 'workflow.resume'
   | 'workflow.stop'
   | 'workflow.start'
-  | 'learning.list'
-  | 'learning.get'
-  | 'learning.snapshot'
-  | 'learning.events'
-  | 'learning.subscribe'
-  | 'learning.unsubscribe'
-  | 'learning.acknowledge'
-  | 'learning.snooze'
-  | 'learning.reject'
-  | 'learning.disable'
-  | 'learning.rollback'
-  | 'learning.promote'
-  | 'learning.review'
-  | 'learning.trust'
   | 'config.read'
   | 'config.effective'
   | 'config.patch'
@@ -269,14 +255,6 @@ export type RuntimeDaemonMutationMethod =
   | 'workflow.resume'
   | 'workflow.stop'
   | 'workflow.start'
-  | 'learning.acknowledge'
-  | 'learning.snooze'
-  | 'learning.reject'
-  | 'learning.disable'
-  | 'learning.rollback'
-  | 'learning.promote'
-  | 'learning.review'
-  | 'learning.trust'
   | 'config.patch'
   | 'config.reload'
   | 'provider.custom.upsert'
@@ -490,20 +468,6 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'workflow.resume',
   'workflow.stop',
   'workflow.start',
-  'learning.list',
-  'learning.get',
-  'learning.snapshot',
-  'learning.events',
-  'learning.subscribe',
-  'learning.unsubscribe',
-  'learning.acknowledge',
-  'learning.snooze',
-  'learning.reject',
-  'learning.disable',
-  'learning.rollback',
-  'learning.promote',
-  'learning.review',
-  'learning.trust',
   'config.read',
   'config.effective',
   'config.patch',
@@ -632,14 +596,6 @@ export const RUNTIME_DAEMON_MUTATION_METHODS: readonly RuntimeDaemonMutationMeth
   'workflow.resume',
   'workflow.stop',
   'workflow.start',
-  'learning.acknowledge',
-  'learning.snooze',
-  'learning.reject',
-  'learning.disable',
-  'learning.rollback',
-  'learning.promote',
-  'learning.review',
-  'learning.trust',
   'config.patch',
   'config.reload',
   'provider.custom.upsert',

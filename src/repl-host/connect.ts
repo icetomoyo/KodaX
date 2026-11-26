@@ -6,7 +6,6 @@ import type { ClientStartupProgress } from '@kodax-ai/coding/client-contract';
 import type {
   CommandCallbacks,
   InkClientPlane,
-  LearningBinding,
   SessionCommandBinding,
   SessionCompactBinding,
   SessionGoalBinding,
@@ -16,7 +15,6 @@ import type { KodaXClientHostAuthorization } from '../client-host-authorization.
 import type { KodaXHostClient } from '../host-protocol/host-client.js';
 import { ensureKodaXHostClient } from '../local-host-client.js';
 import { createReplHostCommands, type ReplHostCommands } from './host-commands.js';
-import { createReplLearning } from './learning.js';
 import { createReplLeases, type ReplLeases } from './leases.js';
 import { createReplClientPlane } from './plane.js';
 import { createReplSessionBindings } from './sessions.js';
@@ -62,7 +60,6 @@ export interface ReplHostBindings extends ReplHostCommands {
   readonly sessionCommands: SessionCommandBinding;
   readonly goal: SessionGoalBinding;
   readonly compactSession: SessionCompactBinding;
-  readonly learning: LearningBinding;
   readonly workflows: NonNullable<CommandCallbacks['workflows']>;
   readonly config: NonNullable<CommandCallbacks['config']>;
   readonly catalog: NonNullable<CommandCallbacks['catalog']>;
@@ -78,7 +75,6 @@ export function createReplHostBindings(client: KodaXHostClient<'local'>, leases:
     sessionCommands: sessions,
     goal,
     compactSession: compact,
-    learning: createReplLearning(client),
     workflows: createReplWorkflows(client, leases),
     config: createReplConfig(client),
     catalog,

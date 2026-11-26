@@ -37,33 +37,11 @@ export type {
 
 export { triageProceduralLearning } from './triage.js';
 export {
-  canMarkCreatedByAgent,
-  decideSkillGovernance,
-} from './skill-governance.js';
-export {
-  MAX_SKILL_MD_BYTES,
-  MAX_SKILL_SUPPORT_FILE_BYTES,
-  resolveSkillSnapshotLocation,
-} from './skill-safe-apply.js';
-export type {
-  SkillSnapshotLocation,
-} from './skill-safe-apply.js';
-export {
   readLearningProposalStore,
   resolveLearningProposalStore,
   updateLearningProposalStatus,
   upsertLearningProposal,
 } from './store.js';
-export {
-  applySkillLearningProposal,
-} from './skill-learning-apply.js';
-export {
-  approveStoredLearningProposal,
-} from './approval.js';
-export type {
-  ApproveStoredLearningProposalOptions,
-  StoredLearningApprovalResult,
-} from './approval.js';
 export type {
   RecordProceduralLearningInput,
 } from './intake.js';
@@ -140,22 +118,12 @@ export {
   learningEventKindForLifecycle,
   slugifyLearnedCapabilityName,
 } from './center-types.js';
-export type {
-  CreateLearningCenterServiceOptions,
-  LearningCenterService,
-} from './learning-center-service.js';
-export {
-  FileLearningCenterService,
-  createLearningCenterService,
-} from './learning-center-service.js';
 export type { LearnedAreaPaths } from './learned-area-store.js';
 export {
   LearnedAreaStore,
   eventFromCapability,
   resolveLearnedAreaPaths,
 } from './learned-area-store.js';
-export type { LearningProposalProjection } from './proposal-projection.js';
-export { projectLearningProposals } from './proposal-projection.js';
 export {
   getLearnedExtensionToolName,
   isLearnedExtensionCommandAllowed,
@@ -169,12 +137,7 @@ export type {
   LearnedSkillInvocationAdmission,
   StagedLearnedSkillArtifact,
 } from './learned-skill.js';
-
-export {
-  createLearnedSkillActionDriver,
-  importApprovedLearnedSkills,
-  type CreateLearnedSkillActionDriverOptions,
-} from './learned-skill-driver.js';
+export { importApprovedLearnedSkills } from './learned-skill-driver.js';
 export type {
   ExactInvokedSkillSnapshot,
   LearnedSkillInvokedReceipt,

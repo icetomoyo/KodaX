@@ -193,7 +193,6 @@ export type {
   RuntimeInterruptInputStatus,
   RuntimeInvocationService,
   RuntimeKodaXOptions,
-  RuntimeLearningService,
   RuntimeLocalAgentStartInput,
   RuntimeManagedTaskProjection,
   RuntimeMcpReloadResult,

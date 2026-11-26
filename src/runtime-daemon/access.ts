@@ -239,7 +239,7 @@ export const RUNTIME_METHOD_PLANES = {
   'session.identityAlias.confirm': 'local',
   'repo.intelligence.inspect': 'local',
   'repo.intelligence.prewarm': 'local',
-  // Memory and skill learning stay with the local owner until their models are redefined.
+  // Memory stays with the local owner until its model is redefined.
   'memory.describe': 'local',
   'memory.listReviews': 'local',
   'memory.listInbox': 'local',
@@ -252,21 +252,6 @@ export const RUNTIME_METHOD_PLANES = {
   'memory.rejectProposal': 'local',
   'memory.rebuild': 'local',
   'memory.ensureOpenTarget': 'local',
-  // Any client governs what the Host learned; its subscription moves to the Host's view.
-  'learning.list': 'data',
-  'learning.get': 'data',
-  'learning.snapshot': 'data',
-  'learning.events': 'data',
-  'learning.subscribe': 'local',
-  'learning.unsubscribe': 'local',
-  'learning.acknowledge': 'data',
-  'learning.snooze': 'data',
-  'learning.reject': 'data',
-  'learning.disable': 'data',
-  'learning.rollback': 'data',
-  'learning.promote': 'data',
-  'learning.review': 'data',
-  'learning.trust': 'data',
 } as const satisfies Record<RuntimeDaemonMethod, RuntimeMethodPlane>;
 
 /**

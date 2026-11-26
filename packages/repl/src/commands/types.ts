@@ -20,7 +20,6 @@ import type * as readline from 'readline';
 import type { InteractiveContext } from '../interactive/context.js';
 import type { PermissionMode } from '../permission/types.js';
 import type { UIContext } from '../ui/context.js';
-import type { LearningBinding, LearningSurfaceSnapshot } from '../ui/types.js';
 
 export type CommandSource = 'builtin' | 'extension' | 'skill' | 'prompt';
 
@@ -306,7 +305,6 @@ export interface CommandCallbacks {
     readonly diagnostics: readonly string[];
     readonly guidance: readonly string[];
   }>;
-  learning?: LearningBinding;
   /**
    * FEATURE_298 T36 — Host-owned Memory management plane for a project
    * root. Absent means Memory controls report unavailable; the UI never
@@ -319,8 +317,6 @@ export interface CommandCallbacks {
    * Host manager so every client of the same Host sees the same work.
    */
   workflows?: WorkflowHostControl;
-  getLearningSummary?: () => Promise<LearningSurfaceSnapshot>;
-  openLearningCenter?: (nameOrSlug?: string) => Promise<void>;
   ui: UIContext;
 }
 

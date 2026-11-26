@@ -356,7 +356,6 @@ import {
   AgentExecutorPlaneInitializationError,
   createSessionLineage,
   emitKodaXDiagnostic,
-  getAgentConfigHome,
   isPathInsideDirectory,
   normalizeCompactionConfig,
   resolveContextWindow,
@@ -377,7 +376,6 @@ import {
   getActiveMcpCallContext,
   type UserInteraction,
   type UserInteractionPromptContext,
-  resolveLearningProposalStore,
 } from "@kodax-ai/agent";
 import {
   buildRecoverySeed,
@@ -458,10 +456,6 @@ import type {
   RuntimeWorkspaceBinding,
 } from "./runtime-agent-binding.js";
 import {
-  createRuntimeLearningOwner,
-  type RuntimeLearningService,
-} from "./runtime-learning.js";
-import {
   createRuntimeMemoryService,
   type RuntimeMemoryService,
 } from "./runtime-memory.js";
@@ -473,7 +467,6 @@ import {
 } from "./runtime-invocations.js";
 import { createRuntimeReviewPreparationService } from "./runtime-review-preparation.js";
 export type { RuntimeInvocationService } from "./runtime-invocations.js";
-export type { RuntimeLearningService } from "./runtime-learning.js";
 export type {
   RuntimeMemoryService, RuntimeMemoryPlane, RuntimeMemoryRebuildResult,
 } from "./runtime-memory.js";
@@ -938,8 +931,6 @@ export type RuntimeGrantedScope =
   | "permission:grant-admin"
   | "integration:admin"
   | "workflow:control"
-  | "learning:read"
-  | "learning:control"
   | "artifact:write"
   | "agent:control"
   | "credential:register"
@@ -1115,7 +1106,6 @@ export interface KodaXRuntime {
   readonly executionBindings: RuntimeExecutionBindingService;
   readonly hostTools: RuntimeHostToolService;
   readonly workflows: RuntimeWorkflowService;
-  readonly learning: RuntimeLearningService;
   readonly memory: RuntimeMemoryService;
   /** FEATURE_298 T37 — trusted Skill/command preparation lives Host-side. */
   readonly invocations: RuntimeInvocationService & RuntimeProductCommandService;
@@ -4300,13 +4290,6 @@ const RUNTIME_ARTIFACT_KINDS: ReadonlySet<string> = new Set([
   "video",
 ]);
 
-function rebaseAgentConfigPath(filePath: string, configHome: string): string {
-  const relative = path.relative(getAgentConfigHome(), filePath);
-  return path.isAbsolute(relative) || relative.startsWith("..")
-    ? filePath
-    : path.join(configHome, relative);
-}
-
 export async function createKodaXRuntime(
   options: CreateKodaXRuntimeOptions,
 ): Promise<KodaXDaemonRuntime> {
@@ -4532,15 +4515,6 @@ async function createKodaXRuntimeInternal(
       ambiguityReporting: true,
       topologyTransparentManagedContext: true,
       directCloneProvenance: true,
-    },
-    learningCenter: { version: 1 },
-    skillLearningLoop: {
-      version: 1,
-      activation: "project_scoped_canary",
-      immutableDecisions: true,
-      recordGatedDiscovery: true,
-      exactUseAttribution: true,
-      rollback: true,
     },
     actorControlPlane: { version: 1, methodNamespace: "agents" },
     // FEATURE_298 T37 — trusted invocation preparation over the daemon face;
@@ -5696,18 +5670,6 @@ async function createKodaXRuntimeInternal(
         snapshotRoot: path.join(managedWorkspaceRoot, "bindings"),
       }),
   });
-  const learning = createRuntimeLearningOwner({
-    rootDir: path.join(configHome, "learned"),
-    userSkillsRoot: path.join(configHome, "skills"),
-    defaultClientIdentity:
-      options.clientInfo?.instanceId ?? `inline_${identity.runtimeId}`,
-    proposalStores: [
-      rebaseAgentConfigPath(
-        resolveLearningProposalStore(process.cwd()),
-        configHome,
-      ),
-    ],
-  });
 
   // FEATURE_298 T36 — Host-owned Memory management; identity derives from
   // (configHome, projectRoot), never from caller-supplied identity.
@@ -5930,7 +5892,6 @@ async function createKodaXRuntimeInternal(
     },
     hostTools: createUnsupportedHostToolService(),
     workflows,
-    learning,
     memory,
     invocations: { ...invocations, ...productCommands },
     config: createRuntimeConfigService(ensureOpen, {
@@ -6160,8 +6121,6 @@ function assertRuntimeCapabilities(
     requirements?.a2aConfigReconciler === undefined &&
     requirements?.sessionObservation === undefined &&
     requirements?.afterTurnInput === undefined &&
-    requirements?.learningCenter === undefined &&
-    requirements?.skillLearningLoop === undefined &&
     requirements?.interruptInput === undefined &&
     requirements?.askUserTransport === undefined &&
     requirements?.permissionCas === undefined &&
@@ -6228,8 +6187,6 @@ function assertRuntimeCapabilities(
     ["a2aConfigReconciler", requirements.a2aConfigReconciler],
     ["sessionObservation", requirements.sessionObservation],
     ["afterTurnInput", requirements.afterTurnInput],
-    ["learningCenter", requirements.learningCenter],
-    ["skillLearningLoop", requirements.skillLearningLoop],
     ["interruptInput", requirements.interruptInput],
     ["askUserTransport", requirements.askUserTransport],
     ["permissionCas", requirements.permissionCas],
@@ -7303,8 +7260,6 @@ function isRuntimeGrantedScope(value: string): value is RuntimeGrantedScope {
     value === "permission:grant-admin" ||
     value === "integration:admin" ||
     value === "workflow:control" ||
-    value === "learning:read" ||
-    value === "learning:control" ||
     value === "artifact:write" ||
     value === "agent:control" ||
     value === "credential:register" ||

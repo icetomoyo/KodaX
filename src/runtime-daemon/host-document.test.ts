@@ -3,9 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HostDocument } from '../host-protocol/view.js';
 import { createHostDocumentStreams } from './host-document.js';
 
-const LEARNING = { ready: 0, newlyActive: 0, attention: 0, active: 0, revision: 1 };
 const session = (id: string) => ({ id, title: id, archived: false });
-const document = (...ids: string[]) => ({ items: [], sessions: ids.map(session), runs: [], interactions: [], learning: LEARNING });
+const document = (...ids: string[]) => ({ items: [], sessions: ids.map(session), runs: [], interactions: [] });
 
 afterEach(() => {
   vi.useRealTimers();

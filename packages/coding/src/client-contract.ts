@@ -31,7 +31,6 @@ import type { ProviderRequestObservation } from '@kodax-ai/llm';
 import type {
   ClientCompactSessionResult,
   ClientMemoryService,
-  ClientLearningService,
   ClientCommandService,
   ClientReviewService,
   ClientReviewInput,
@@ -174,7 +173,6 @@ export interface KodaXProductClient {
   readonly commands: ClientCommandService;
   readonly review: ClientReviewService;
   readonly memory: ClientMemoryService;
-  readonly learning: ClientLearningService;
   readonly host: {
     /** Request an idle Host to shut down. Acceptance does not prove cleanup has completed. */
     shutdown(): Promise<{ readonly accepted: true }>;

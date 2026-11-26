@@ -119,9 +119,6 @@ import {
   type HistoryItem,
   type ToolCall,
   type PromptSubmitPayload,
-  type LearningBinding,
-  type LearningCapabilityView,
-  type LearningSurfaceSnapshot,
   KeypressHandlerPriority,
 } from "./types.js";
 import { getActivePasteStore, type PastedContent } from "./utils/paste-store.js";
@@ -211,7 +208,6 @@ import {
   type AskUserSelectionAnswer,
   type TeamModeHandle,
   type WorkflowProcessEvent,
-  type LearningEvent,
 } from "@kodax-ai/agent";
 import { deriveProjectKeyFromRoot } from "../interactive/project-key.js";
 import {
@@ -530,10 +526,6 @@ import {
 import { buildHelpMenuSections } from "./constants/layout.js";
 import { buildStatusBarViewModel, formatStreamingActivity } from "./view-models/status-bar.js";
 import {
-  dismissLearningRecoveryAfterQuerySubmit,
-  formatLearningRecoverySummary,
-} from "./view-models/learning-summary.js";
-import {
   buildPromptActivityViewModel,
   buildPromptPlaceholderText,
   shouldRenderPromptActivityInFooter,
@@ -615,63 +607,6 @@ function reportBackgroundSessionPersistenceError(error: unknown): void {
     message: 'Failed to persist interactive Session state in the background.',
     detail: error,
   });
-}
-
-function learningCenterActions(record: LearningCapabilityView): SelectOption[] {
-  const actions: SelectOption[] = [{ label: "Acknowledge notification", value: "acknowledge" }];
-  if (record.lifecycle === "ready") {
-    actions.push(
-      { label: "Review", value: "review" },
-      { label: "Review & Trust", value: "trust" },
-      { label: "Snooze for 24 hours", value: "snooze" },
-      { label: "Reject", value: "reject" },
-    );
-  } else if (record.lifecycle === "active_learned") {
-    actions.push(
-      { label: "Disable", value: "disable" },
-      { label: "Promote to user catalog", value: "promote" },
-    );
-  } else if (record.lifecycle === "quarantined") {
-    actions.push(
-      { label: "Rollback", value: "rollback" },
-      { label: "Disable", value: "disable" },
-    );
-  }
-  return actions;
-}
-
-export function buildLearningCenterOptions(
-  records: readonly LearningCapabilityView[],
-): SelectOption[] {
-  const slugCounts = new Map<string, number>();
-  for (const record of records) {
-    slugCounts.set(record.slug, (slugCounts.get(record.slug) ?? 0) + 1);
-  }
-  return records.map((record) => {
-    const duplicateId = (slugCounts.get(record.slug) ?? 0) > 1
-      ? ` · ${record.capabilityId}`
-      : "";
-    return {
-      label: `${record.displayName} · ${record.carrier} · ${record.lifecycle}${duplicateId}`,
-      value: record.capabilityId,
-    };
-  });
-}
-
-async function applyLearningCenterAction(
-  binding: LearningBinding,
-  slug: string,
-  action: string,
-): Promise<void> {
-  if (action === "acknowledge") await binding.acknowledge(slug);
-  else if (action === "snooze") {
-    await binding.snooze(slug, new Date(Date.now() + 24 * 60 * 60_000).toISOString());
-  } else if (action === "reject") await binding.reject(slug);
-  else if (action === "disable") await binding.disable(slug);
-  else if (action === "rollback") await binding.rollback(slug);
-  else if (action === "promote") await binding.promote(slug, "user");
-  else if (action === "review") await binding.review(slug);
-  else if (action === "trust") await binding.trust(slug);
 }
 
 export interface HostSessionPersistenceStorage {
@@ -822,7 +757,6 @@ export interface InkREPLOptions extends KodaXOptions {
   validateSetupA2AConfig?: (value: unknown) => unknown;
   prepareSetupSandbox?: CommandCallbacks['prepareSetupSandbox'];
   inspectSandbox?: CommandCallbacks['inspectSandbox'];
-  learning?: LearningBinding;
   /** FEATURE_298 T22 — Host workflow plane; required for start/control. */
   workflows?: CommandCallbacks['workflows'];
   commandClient?: CommandCallbacks['commandClient'];
@@ -2198,17 +2132,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const [submitCounter, setSubmitCounter] = useState(0); // Counter to trigger clear on submit
   const [localCanQueueFollowUps, setCanQueueFollowUps] = useState(false);
   const canQueueFollowUps = localCanQueueFollowUps || hostActiveRunId !== undefined;
-  const [learningSnapshot, setLearningSnapshot] = useState<LearningSurfaceSnapshot | undefined>(undefined);
-  const [learningNotices, setLearningNotices] = useState<readonly {
-    readonly id: string;
-    readonly text: string;
-    readonly tone: "warning" | "accent";
-  }[]>([]);
-  const hasSubmittedQueryRef = useRef(false);
-  const dismissLearningRecovery = useCallback(() => {
-    hasSubmittedQueryRef.current = true;
-    setLearningNotices(dismissLearningRecoveryAfterQuerySubmit);
-  }, []);
   const [liveTokenCount, setLiveTokenCount] = useState<number | null>(null); // Live token count for real-time display
   const workflowIntentBoundaryQueueLockedRef = useRef(false);
   const terminalHostProfile = useMemo(() => detectTerminalHostProfile(), []);
@@ -2226,106 +2149,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const appendHistoryItemsWithPersistenceRef = useRef<((items: readonly CreatableHistoryItem[]) => void) | null>(null);
   const interruptPersistenceQueuedRef = useRef(false);
   const gracefulExitRunnerRef = useRef<Promise<void> | null>(null);
-  useEffect(() => {
-    const binding = options.learning;
-    if (!binding) return undefined;
-    let active = true;
-    let subscription: ReturnType<LearningBinding['subscribe']> | undefined;
-    let retry: ReturnType<typeof setTimeout> | undefined;
-    let generation = 0;
-    let revision = 0;
-    let retryDelay = 1_000;
-    const reportRefreshFailure = (error: unknown): void => {
-      emitKodaXDiagnostic({ source: "repl:learning", level: "warn",
-        message: "Failed to refresh the Learning Center snapshot.",
-        detail: error instanceof Error ? error.message : String(error) });
-    };
-    const showEvent = (event: LearningEvent): void => {
-      if (event.kind !== "ready" && event.kind !== "activated" && event.kind !== "attention") return;
-      const action = event.kind === "ready" ? "is ready for review"
-        : event.kind === "activated" ? "became active" : "requires attention";
-      setLearningNotices((current) => [{ id: event.eventId,
-        text: `A learned ${event.carrier} ${action}: ${event.displayName}  [/learn]`,
-        tone: event.kind === "activated" ? "accent" as const : "warning" as const,
-      }, ...current.filter((notice) => notice.id !== event.eventId)].slice(0, 2));
-    };
-    const recoverObservation = (currentGeneration: number, error: unknown): void => {
-      if (!active || currentGeneration !== generation) return;
-      generation += 1;
-      subscription?.close();
-      reportRefreshFailure(error);
-      const upgradeRequired = typeof error === 'object' && error !== null
-        && 'code' in error && error.code === 'daemon_upgrade_required';
-      setLearningNotices((notices) => [{ id: 'learning-observation-error', tone: 'warning' as const,
-        text: upgradeRequired ? 'Learning Center updates require a Host upgrade and restart. [/learn]'
-          : 'Learning Center updates interrupted; reconnecting. [/learn]',
-      }, ...notices.filter((notice) => notice.id !== 'learning-observation-error')].slice(0, 2));
-      if (upgradeRequired) return;
-      retry = setTimeout(open, retryDelay);
-      retryDelay = Math.min(retryDelay * 2, 10_000);
-    };
-    const showRecovery = (snapshot: LearningSurfaceSnapshot): void => {
-      retryDelay = 1_000;
-      setLearningNotices((notices) => notices.filter((notice) => notice.id !== 'learning-observation-error'));
-      const recovery = formatLearningRecoverySummary(snapshot);
-      if (recovery && !hasSubmittedQueryRef.current) {
-        const tone: 'warning' | 'accent' = snapshot.attention > 0 || snapshot.ready > 0 ? 'warning' : 'accent';
-        setLearningNotices((notices) => [{ id: 'learning-recovery', text: recovery, tone },
-          ...notices.filter((notice) => notice.id !== 'learning-recovery')].slice(0, 2));
-      }
-    };
-    const open = (): void => {
-      if (!active) return;
-      const currentGeneration = ++generation;
-      let syncing = true;
-      let dirty = false;
-      let refreshing = false;
-      const pending: LearningEvent[] = [];
-      const current = (): boolean => active && currentGeneration === generation;
-      const failed = (error: unknown): void => recoverObservation(currentGeneration, error);
-      const refresh = async (): Promise<void> => {
-        dirty = true;
-        if (refreshing || syncing) return;
-        refreshing = true;
-        try {
-          while (dirty && current()) {
-            dirty = false;
-            const snapshot = await binding.getSnapshot();
-            if (!current()) return;
-            revision = Math.max(revision, snapshot.revision);
-            setLearningSnapshot((previous) => previous && previous.revision > snapshot.revision ? previous : snapshot);
-          }
-        } finally { refreshing = false; }
-      };
-      const opened = binding.subscribe((event) => {
-        if (!current()) return;
-        if (syncing) { pending.push(event); return; }
-        if (event.sequence <= revision) return;
-        showEvent(event);
-        void refresh().catch(failed);
-      }, { afterRevision: revision }, failed);
-      subscription = opened;
-      if (!current()) opened.close();
-      void (async () => {
-        await opened.ready;
-        if (!current()) return;
-        const snapshot = await binding.getSnapshot();
-        if (!current()) return;
-        revision = Math.max(revision, snapshot.revision);
-        setLearningSnapshot((previous) => previous && previous.revision > snapshot.revision ? previous : snapshot);
-        showRecovery(snapshot);
-        syncing = false;
-        for (const event of pending) if (event.sequence > revision) showEvent(event);
-        if (pending.length > 0) await refresh();
-      })().catch(failed);
-    };
-    open();
-    return () => {
-      active = false;
-      if (retry) clearTimeout(retry);
-      subscription?.close();
-    };
-  }, [options.learning]);
   const [isInputEmpty, setIsInputEmpty] = useState(true); // Track if input is empty for ? shortcut
   const [inputText, setInputText] = useState("");
   const [sideFocus, setSideFocus] = useState<import('@kodax-ai/coding/client-contract').ClientSession>();
@@ -4731,7 +4554,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         parentContextTokens: clientView?.session.id === context.sessionId ? clientView.parentContextTokens : undefined,
         maxIter: displaySnapshot?.maxIter ?? clientView?.settings.maxIter ?? options.maxIter ?? streamingState.maxIter,
         contextUsage,
-        learning: learningSnapshot,
         isLoading: statusBarIsLoading,
         managedState: {
           phase: managedTaskStatus?.phase,
@@ -4765,7 +4587,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       options.maxIter,
       streamingState.maxIter,
       contextUsage,
-      learningSnapshot,
       statusBarIsLoading,
       managedTaskStatus?.phase,
       managedTaskStatus?.harnessProfile,
@@ -4919,7 +4740,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       ? 'Host observation interrupted; displayed state may be outdated.'
       : clientObservationStatus?.state === 'closed' && clientObservationStatus.reason === 'unavailable'
         ? 'Host observation unavailable; displayed state may be outdated.' : undefined;
-    return [...base, ...learningNotices, ...clientPlaneNotices,
+    return [...base, ...clientPlaneNotices,
       ...(sideNotice && !sideFocus ? [{ id: 'side-chat', text: sideNotice }] : []),
       ...(observationNotice ? [{ id: 'host-observation', text: observationNotice }] : []),
       ...(shownSandboxNotice ? [{ id: 'sandbox', text: shownSandboxNotice }] : [])];
@@ -4927,7 +4748,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     historySearchMatches.length,
     historySearchQuery,
     isHistorySearchActive,
-    learningNotices,
     clientPlaneNotices,
     clientObservationStatus,
     shownSandboxNotice,
@@ -6955,47 +6775,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       options.map((option) => ({ label: option, value: option })),
     ).then((value) => (Array.isArray(value) ? value[0] : value));
   }, [showSelectDialogWithOptions]);
-
-  const openLearningCenter = useCallback(async (requested?: string): Promise<void> => {
-    const binding = options.learning;
-    if (!binding) {
-      // FEATURE_298 T23 — a missing binding is reported, never silently
-      // ignored, and no other learning store is consulted.
-      setLearningNotices([{
-        id: "learning-center-unavailable",
-        text: "Learning Center is unavailable in this runtime.",
-        tone: "warning",
-      }]);
-      return;
-    }
-    let capabilityKey = requested;
-    if (!capabilityKey) {
-      const page = await binding.list({ limit: 200 });
-      if (page.items.length === 0) {
-        setLearningNotices([{
-          id: "learning-center-empty",
-          text: "Learning Center has no learned capabilities.",
-          tone: "accent",
-        }]);
-        return;
-      }
-      const selected = await showSelectDialogWithOptions(
-        "Learning Center — type to search",
-        buildLearningCenterOptions(page.items),
-      );
-      capabilityKey = Array.isArray(selected) ? selected[0] : selected;
-    }
-    if (!capabilityKey) return;
-    const detail = await binding.get(capabilityKey);
-    const selectedAction = await showSelectDialogWithOptions(
-      `${detail.displayName} · ${detail.carrier} · ${detail.lifecycle}`,
-      learningCenterActions(detail),
-    );
-    const action = Array.isArray(selectedAction) ? selectedAction[0] : selectedAction;
-    if (!action) return;
-    await applyLearningCenterAction(binding, detail.capabilityId, action);
-    setLearningSnapshot(await binding.getSnapshot());
-  }, [options.learning, showSelectDialogWithOptions]);
 
   // FEATURE_087/088 (v0.7.28): bind a stable askUser implementation to the
   // ConstructionRuntime policy module. The policy needs an interactive
@@ -10134,8 +9913,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           ? { delivery: "host" as const }
           : undefined;
 
-        dismissLearningRecovery();
-
         // FEATURE_298 T17 — plane-bound follow-ups join the Host queue.
         // Skill references retain their raw text for Host preparation.
         // FEATURE_149 parity: when the view
@@ -10191,8 +9968,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         touchContext(context);
         return;
       }
-
-      dismissLearningRecovery();
 
       // Banner remains visible - it will scroll up naturally as messages are added
       // (Removed showBanner toggle to keep layout stable)
@@ -10476,9 +10251,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           validateSetupA2AConfig: options.validateSetupA2AConfig,
           prepareSetupSandbox: options.prepareSetupSandbox,
           inspectSandbox: options.inspectSandbox,
-          learning: options.learning,
-          getLearningSummary: options.learning ? () => options.learning!.getSnapshot() : undefined,
-          openLearningCenter,
           workflows: options.workflows ? { ...options.workflows,
             start: withObservedExecution(ensureClientObservation, options.workflows.start.bind(options.workflows)),
             resume: withObservedExecution(ensureClientObservation, options.workflows.resume.bind(options.workflows)) } : undefined,
@@ -11640,7 +11412,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       finalizeAllExecutingToolCalls,
       syncManagedForegroundToolGroup,
       clearWorkStripTimers,
-      dismissLearningRecovery,
       replaceWorkflowLiveStatus,
       updateWorkflowLiveStatus,
       selectClientConfig,

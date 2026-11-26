@@ -57,7 +57,6 @@ export interface BuildSurfaceStatusBarPropsOptions {
   streamingState: SurfaceStatusStreamingState;
   maxIter?: number;
   contextUsage?: SurfaceStatusContextUsage;
-  learning?: StatusBarProps["learning"];
   isLoading: boolean;
   managedState?: SurfaceStatusManagedState;
   clientActivity?: ClientSessionActivity;
@@ -133,7 +132,6 @@ export function buildSurfaceStatusBarProps(
     contextTokens: !hasMatchingBudget && currentTokens !== undefined ? { currentTokens, scope } : undefined,
     tokenUsage: activity?.usage ? { input: activity.usage.inputTokens,
       output: activity.usage.outputTokens, total: activity.usage.totalTokens } : undefined,
-    learning: options.learning,
     isCompacting: liveActivity?.compacting ?? options.streamingState.isCompacting,
     showBusyStatus: false,
     managedPhase: options.isLoading ? managedState?.phase : undefined,

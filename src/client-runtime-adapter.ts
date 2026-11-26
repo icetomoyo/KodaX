@@ -158,21 +158,6 @@ export function toKodaXProductClient(
         };
       },
     },
-    learning: {
-      list: (query) => runtime.learning.list(query),
-      get: (nameOrSlugOrId) => runtime.learning.get(nameOrSlugOrId),
-      getSnapshot: () => runtime.learning.getSnapshot(),
-      events: (afterRevision) => runtime.learning.events(afterRevision),
-      subscribe: (options) => runtime.learning.subscribe(options),
-      acknowledge: (nameOrSlugOrId) => runtime.learning.acknowledge(nameOrSlugOrId),
-      snooze: (nameOrSlugOrId, until) => runtime.learning.snooze(nameOrSlugOrId, until),
-      reject: (nameOrSlugOrId) => runtime.learning.reject(nameOrSlugOrId),
-      disable: (nameOrSlugOrId) => runtime.learning.disable(nameOrSlugOrId),
-      rollback: (nameOrSlugOrId) => runtime.learning.rollback(nameOrSlugOrId),
-      promote: (nameOrSlugOrId, scope) => runtime.learning.promote(nameOrSlugOrId, scope),
-      review: (nameOrSlugOrId) => runtime.learning.review(nameOrSlugOrId),
-      trust: (nameOrSlugOrId) => runtime.learning.trust(nameOrSlugOrId),
-    },
     memory: {
       async forProject(projectRoot) {
         const plane = await runtime.memory.forProject(projectRoot);

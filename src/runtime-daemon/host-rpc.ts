@@ -9,8 +9,6 @@ import { isDeepStrictEqual } from 'node:util';
 import {
   emitKodaXDiagnostic, type AgentActor, type AgentDetail, type AgentEvent, type AgentFollowupResult, type AgentMailboxMessage,
   type AgentOutput, type AgentProgressItem, type AgentTreeSnapshot, type AgentTurn, type AgentTurnRef,
-  type LearnedCapabilityRecord, type LearningEvent,
-  type LearningPage,
 } from '@kodax-ai/agent';
 
 import type { HostCloseReason } from '../host-protocol/close.js';
@@ -1001,112 +999,7 @@ const V1_HANDLERS: { readonly [Method in ForwardedMethod]: V1Handler<Method> } =
   'memory.forget': async ({ project, projectRoot, scope, id, ifRevision }, _v1, caller) => (
     forgetNote(await notesOf(caller, project, projectRoot), scope, id, ifRevision)
   ),
-
-  'learning.list': async ({ search, carrier, lifecycle, limit, cursor }, v1) => {
-    const page = await v1('learning.list', defined({ search, carrier, lifecycle, limit, cursor })) as LearningPage;
-    return { items: page.items.map(toLearning), nextCursor: page.nextCursor, revision: page.revision };
-  },
-  'learning.get': async ({ nameOrSlug }, v1) => ({
-    capability: toLearning(await v1('learning.get', { nameOrSlug }) as LearnedCapabilityRecord),
-  }),
-  'learning.snapshot': async (_params, v1) => v1('learning.snapshot') as Promise<Readonly<Record<string, unknown>>>,
-  'learning.events': async ({ afterRevision }, v1) => ({
-    items: (await v1('learning.events', defined({ afterRevision })) as readonly LearningEvent[]).map(toLearningEvent),
-  }),
-  // What a client acknowledged or snoozed is its own, and the Host learns of no change in it: its documents read it again.
-  'learning.acknowledge': async ({ nameOrSlug }, v1, caller) => {
-    const answer = await learningDecision(v1, 'learning.acknowledge', { nameOrSlug });
-    caller.documents.changed();
-    return answer;
-  },
-  'learning.snooze': async ({ nameOrSlug, until }, v1, caller) => {
-    const answer = await learningDecision(v1, 'learning.snooze', { nameOrSlug, until: new Date(until).toISOString() });
-    caller.documents.changed();
-    return answer;
-  },
-  'learning.reject': async ({ nameOrSlug, ifRevision }, v1) => learningOutcome(v1, 'learning.reject', { nameOrSlug, ifRevision }),
-  'learning.disable': async ({ nameOrSlug, ifRevision }, v1) => learningOutcome(v1, 'learning.disable', { nameOrSlug, ifRevision }),
-  'learning.rollback': async ({ nameOrSlug, ifRevision }, v1) => learningOutcome(v1, 'learning.rollback', { nameOrSlug, ifRevision }),
-  'learning.review': async ({ nameOrSlug, ifRevision }, v1) => learningOutcome(v1, 'learning.review', { nameOrSlug, ifRevision }),
-  'learning.trust': async ({ nameOrSlug, ifRevision }, v1) => learningOutcome(v1, 'learning.trust', { nameOrSlug, ifRevision }),
-  'learning.promote': async ({ nameOrSlug, scope, ifRevision }, v1) => (
-    learningOutcome(v1, 'learning.promote', { nameOrSlug, scope, ifRevision })
-  ),
 };
-
-/** What a capability is once each decision has taken effect. */
-const LEARNING_OUTCOMES: Readonly<Record<string, (capability: LearnedCapabilityRecord) => boolean>> = {
-  'learning.reject': ({ lifecycle }) => lifecycle === 'rejected',
-  'learning.disable': ({ lifecycle }) => lifecycle === 'archived',
-  'learning.review': ({ lifecycle }) => lifecycle === 'testing',
-  'learning.trust': ({ lifecycle }) => lifecycle === 'active_learned',
-  'learning.rollback': ({ lifecycle, lastAction }) => lifecycle === 'active_learned' && lastAction === 'rollback',
-  'learning.promote': ({ lifecycle }) => lifecycle === 'promoted_user',
-};
-
-/**
- * A decision the capability already reflects is not made again, so one sent
- * again neither fails on its lifecycle nor moves the revision. Made on
- * `ifRevision`, it counts as made only when the revision right after is that
- * outcome: anything later the person did not see. Promoting again still runs:
- * it puts back the person's copy of the Skill if it went missing.
- */
-async function learningOutcome(
-  v1: V1Call, method: RuntimeDaemonMethod, { ifRevision, ...params }: { readonly nameOrSlug: string; readonly ifRevision?: number; readonly scope?: string },
-): Promise<Readonly<Record<string, never>>> {
-  const current = await v1('learning.get', { nameOrSlug: params.nameOrSlug }) as LearnedCapabilityRecord;
-  const made = ifRevision === undefined || current.revision === ifRevision + 1;
-  if (made && LEARNING_OUTCOMES[method]?.(current) === true) {
-    if (method === 'learning.promote') await v1(method, params);
-    return {};
-  }
-  return learningDecision(v1, method, defined({ ...params, ifRevision }));
-}
-
-// v1 answers a decision with `{ ok: true }`; v2 answers with nothing to read.
-async function learningDecision(v1: V1Call, method: RuntimeDaemonMethod, params: Readonly<Record<string, unknown>>): Promise<Readonly<Record<string, never>>> {
-  await v1(method, params);
-  return {};
-}
-
-/** A capability without the Host's bookkeeping: scope hashes, provenance and trial bindings stay inside. */
-function toLearning(record: LearnedCapabilityRecord): Readonly<Record<string, unknown>> {
-  return {
-    id: record.capabilityId,
-    name: record.displayName,
-    slug: record.slug,
-    carrier: record.carrier,
-    lifecycle: record.lifecycle,
-    revision: record.revision,
-    createdAt: utcMilliseconds(record.createdAt),
-    updatedAt: utcMilliseconds(record.updatedAt),
-    lastAction: record.lastAction,
-    artifactPath: record.artifactPath,
-    previousGoodRevision: record.previousGoodRevision,
-    diagnostics: record.diagnostics,
-    canary: record.schemaVersion === 2 ? {
-      invocationCount: record.canary.invocationCount,
-      maxInvocations: record.canary.maxInvocations,
-      verifiedSuccesses: record.canary.verifiedSuccesses,
-      credibleNegatives: record.canary.credibleNegatives,
-    } : undefined,
-  };
-}
-
-function toLearningEvent(event: LearningEvent): Readonly<Record<string, unknown>> {
-  return {
-    sequence: event.sequence,
-    id: event.eventId,
-    kind: event.kind,
-    capabilityId: event.capabilityId,
-    capabilityRevision: event.capabilityRevision,
-    lifecycle: event.lifecycle,
-    name: event.displayName,
-    slug: event.slug,
-    carrier: event.carrier,
-    createdAt: utcMilliseconds(event.createdAt),
-  };
-}
 
 function toExtensions({ active, extensions, diagnostics }: RuntimeExtensionListResult): Readonly<Record<string, unknown>> {
   return { active, extensions, failures: diagnostics?.failures ?? [] };
@@ -1890,9 +1783,7 @@ export function createRuntimeDaemonHostRpcPeer(
           : options.protocol.HostDocument,
         send: options.send,
         congested: options.congested,
-        follow: changed => followHost(options.dispatcher.runtime, changed, (error) => {
-          onInternalError('view.subscribe', error, newHostIncident());
-        }),
+        follow: changed => followHost(options.dispatcher.runtime, changed),
         onInternalError,
       });
       const dispatcher = createRuntimeDaemonDispatcher({
@@ -2046,51 +1937,24 @@ const UNSETTLED_RUN_PHASES: readonly RuntimeRunPhase[] = [
 
 /** The Host document as the caller may see it, each part read as the caller's own query would read it. */
 async function readHostDocument(v1: V1Call, caller: HostCaller): Promise<Readonly<Record<string, unknown>>> {
-  const [sessions, runs, interactions, learning] = await Promise.all([
+  const [sessions, runs, interactions] = await Promise.all([
     V1_HANDLERS['session.list']({ limit: HOST_DOCUMENT_SESSIONS }, v1, caller) as Promise<{ readonly items: unknown }>,
     v1('run.list', { phase: UNSETTLED_RUN_PHASES }) as Promise<readonly RuntimeRunStatus[]>,
     V1_HANDLERS['interaction.list']({}, v1, caller) as Promise<{ readonly items: unknown }>,
-    v1('learning.snapshot'),
   ]);
   return {
     items: [],
     sessions: sessions.items,
     runs: runs.map(run => ({ id: run.runId, sessionId: run.sessionId, phase: run.phase })),
     interactions: interactions.items,
-    learning,
   };
 }
 
-/**
- * Calls `changed` when the Session list or what the Host learned may have
- * changed. Learning is followed from the revision it is at now, so the first
- * read of the document sees every change that came before.
- */
-async function followHost(runtime: KodaXRuntime, changed: () => void, report: (error: unknown) => void): Promise<() => void> {
+/** Calls `changed` when the Session list may have changed. */
+async function followHost(runtime: KodaXRuntime, changed: () => void): Promise<() => void> {
   const sessions = runtime.events.onSessionListChanged?.(changed);
   if (sessions === undefined) throw new Error('This runtime does not report changes to its Session list.');
-  let active = true;
-  try {
-    const { revision } = await runtime.learning.getSnapshot();
-    const learned = runtime.learning.subscribe({ afterRevision: revision });
-    await learned.ready;
-    void (async () => {
-      while (active) {
-        const next = await learned.next();
-        if (!active) return;
-        if (next.done === true) throw new Error('The Host stopped reporting what it learned.');
-        changed();
-      }
-    })().catch((error: unknown) => { if (active) report(error); });
-    return () => {
-      active = false;
-      sessions.close();
-      void learned.return?.().catch(report);
-    };
-  } catch (error: unknown) {
-    sessions.close();
-    throw error;
-  }
+  return () => sessions.close();
 }
 
 /** Exported for tests. */

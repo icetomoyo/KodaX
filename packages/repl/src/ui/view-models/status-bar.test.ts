@@ -144,30 +144,6 @@ describe("status-bar context pressure", () => {
   });
 });
 
-describe("status-bar Learning Center segment", () => {
-  it("appends one compact non-zero segment after context usage", () => {
-    const viewModel = buildStatusBarViewModel(baseProps({
-      contextUsage: {
-        currentTokens: 10_000,
-        contextWindow: 200_000,
-        triggerPercent: 100,
-      },
-      learning: { ready: 1, newlyActive: 2, attention: 1, active: 6, revision: 4 },
-    }));
-    const contextIndex = viewModel.segments.findIndex((segment) => segment.id === "context-usage");
-    const learningIndex = viewModel.segments.findIndex((segment) => segment.id === "learning");
-    expect(viewModel.segments[learningIndex]).toMatchObject({ text: "Learn:1R/2N/1!", tone: "warning" });
-    expect(learningIndex).toBe(contextIndex + 1);
-  });
-
-  it("hides inventory-only and zero snapshots", () => {
-    const viewModel = buildStatusBarViewModel(baseProps({
-      learning: { ready: 0, newlyActive: 0, attention: 0, active: 6, revision: 1 },
-    }));
-    expect(viewModel.segments.some((segment) => segment.id === "learning")).toBe(false);
-  });
-});
-
 describe("status-bar (Ink view-model) — canonical permission profiles", () => {
   it("renders Auto[LLM] for the single Auto policy", () => {
     const text = getStatusBarText(baseProps({ permissionMode: "auto" }));

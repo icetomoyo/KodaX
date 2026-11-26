@@ -180,32 +180,6 @@ describe('runtime daemon client proxy', () => {
     });
   });
 
-  it('sends a learning decision with the revision the caller saw, and without one when none was given', async () => {
-    const sent: Array<[string, unknown]> = [];
-    const client = createRuntimeDaemonClient({
-      identity: { runtimeId: 'runtime-learning', mode: 'daemon', profile: 'default', startedAt: '2026-11-23T00:00:00.000Z', version: '0.7.97' },
-      transport: { async request(method, params) { sent.push([method, params]); return { ok: true }; }, subscribe() { return { close() {} }; } },
-    });
-
-    await client.learning.reject('skill', 3);
-    await client.learning.disable('skill', 4);
-    await client.learning.rollback('skill', 5);
-    await client.learning.review('skill', 6);
-    await client.learning.trust('skill', 7);
-    await client.learning.promote('skill', 'user', 8);
-    await client.learning.trust('skill');
-
-    expect(sent).toEqual([
-      ['learning.reject', { nameOrSlug: 'skill', ifRevision: 3 }],
-      ['learning.disable', { nameOrSlug: 'skill', ifRevision: 4 }],
-      ['learning.rollback', { nameOrSlug: 'skill', ifRevision: 5 }],
-      ['learning.review', { nameOrSlug: 'skill', ifRevision: 6 }],
-      ['learning.trust', { nameOrSlug: 'skill', ifRevision: 7 }],
-      ['learning.promote', { nameOrSlug: 'skill', scope: 'user', ifRevision: 8 }],
-      ['learning.trust', { nameOrSlug: 'skill' }],
-    ]);
-  });
-
   it('keeps Agent credential binding host-only and sends no operation envelope (T30)', async () => {
     let captured: {
       readonly params?: unknown;
