@@ -48,6 +48,8 @@ export function resolveBuiltinToolCapability(toolName: string): ToolCapability |
     case 'grep':
     case 'code_search':
     case 'semantic_lookup':
+    case 'find_symbol':
+    case 'file_outline':
     case 'lsp_definition':
     case 'lsp_hover':
     case 'lsp_references':

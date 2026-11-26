@@ -266,6 +266,19 @@ describe('executeChildAgents — guardrails propagation (FEATURE_092 phase 2b.7b
     expect(childOptions.context?.contextDiagnostics).toBe(true);
   });
 
+  it('lends the repository index to children in the same repository, not to worktree children', async () => {
+    const repoIntel = { root: '/test/repo', request: async <T>(): Promise<T> => Promise.reject(new Error('not asked here')) };
+    mockRunKodaX.mockResolvedValue(okResult('inspected'));
+    mockToolWorktreeCreate.mockResolvedValue(JSON.stringify({ path: '/tmp/wt-index', branch: 'kodax-wt-workflow-cb-wi' }));
+    mockToolWorktreeRemove.mockResolvedValue(JSON.stringify({ restored: true }));
+
+    await executeChildAgents([createBundle()], { ...createCtx(), repoIntel }, createOptions());
+    await executeChildAgents([createBundle({ id: 'cb-wi', isolation: 'worktree' })], { ...createCtx(), repoIntel }, createOptions());
+
+    const inherited = mockRunKodaX.mock.calls.map(call => (call[0] as { context?: { repoIntel?: unknown } }).context?.repoIntel);
+    expect(inherited).toEqual([repoIntel, undefined]);
+  });
+
   it('inherits the host shell execution contract into native child runtimes', async () => {
     mockRunKodaX.mockResolvedValue(okResult('inspected'));
     const shellExecution = {

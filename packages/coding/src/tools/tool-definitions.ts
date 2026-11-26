@@ -68,6 +68,7 @@ import { toolProcessContext } from './process-context.js';
 import { toolImpactEstimate } from './impact-estimate.js';
 import { toolRelationshipScan } from './relationship-scan.js';
 import { toolCyclicDependencies } from './cyclic-dependencies.js';
+import { toolFileOutline, toolFindSymbol } from './repo-intel-navigation.js';
 import {
   toolLspDefinition,
   toolLspHover,
@@ -933,6 +934,24 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     description: staticText("tool.module_context.description"),
     input_schema: toolInputSchema('tool.module_context.input_schema'),
     handler: toolModuleContext,
+    sideEffect: 'readonly',
+    toClassifierInput: () => '',
+  },
+  {
+    name: 'find_symbol',
+    workSurface: 'coding',
+    description: staticText("tool.find_symbol.description"),
+    input_schema: toolInputSchema('tool.find_symbol.input_schema'),
+    handler: toolFindSymbol,
+    sideEffect: 'readonly',
+    toClassifierInput: () => '',
+  },
+  {
+    name: 'file_outline',
+    workSurface: 'coding',
+    description: staticText("tool.file_outline.description"),
+    input_schema: toolInputSchema('tool.file_outline.input_schema'),
+    handler: toolFileOutline,
     sideEffect: 'readonly',
     toClassifierInput: () => '',
   },

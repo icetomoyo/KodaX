@@ -35,13 +35,16 @@ import { listRunScopedTools, lookupRunScopedTool, toModelToolDefinition } from '
 type ToolSearchContext = Pick<KodaXToolExecutionContext,
   'extensionRuntime' | 'skillScriptRunner' | 'executionCwd' | 'excludeTools' | 'toolVisibilityPolicy'
   | 'discoveryToolNames' | 'workflowHost' | 'loadSessionHistory' | 'actorControl'
-  | 'lspService' | 'lspNavigationDisabled' | 'workMode' | 'visualObservationOwner'>;
+  | 'lspService' | 'lspNavigationDisabled' | 'repoIntel' | 'workMode' | 'visualObservationOwner'>;
 
 const LSP_NAVIGATION_TOOL_NAMES = new Set([
   'lsp_definition', 'lsp_hover', 'lsp_references', 'lsp_document_symbols',
   'lsp_workspace_symbols', 'lsp_implementation', 'lsp_incoming_calls',
   'lsp_outgoing_calls', 'lsp_prepare_call_hierarchy',
 ]);
+
+/** Answered by the Host's RepoIntel engine, so offered only where the Host bound one. */
+const REPO_INDEX_TOOL_NAMES = new Set(['find_symbol', 'file_outline']);
 
 const ACTOR_BOUND_TOOL_NAMES = new Set([
   'spawn_agent', 'send_message', 'followup_task', 'wait_agent',
@@ -100,6 +103,7 @@ export function isToolDiscoverable(name: string, context: ToolSearchContext): bo
     if (context.lspNavigationDisabled === true && !context.lspService
       && LSP_NAVIGATION_TOOL_NAMES.has(name)) return false;
     if (!context.actorControl && ACTOR_BOUND_TOOL_NAMES.has(name)) return false;
+    if (!context.repoIntel && REPO_INDEX_TOOL_NAMES.has(name)) return false;
     if (name === 'run_workflow' && !context.workflowHost) return false;
     if (name === 'run_skill_script' && (!context.skillScriptRunner || !context.executionCwd)) return false;
     if (isSessionHistoryTool(name) && !context.loadSessionHistory) return false;

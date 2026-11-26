@@ -530,6 +530,56 @@ Parent-only interactive REPL approval of the finished plan. Approved → accept-
 }
 ```
 
+## file_outline
+
+List the definitions in one file (classes, functions, methods, types, variables) with their line ranges and the source line that declares each. Use it to see how a file is organized, or to find which lines to read, without reading the whole file. A file in a language the index does not cover is reported as not indexed.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "path": {
+      "type": "string",
+      "description": "File to outline"
+    }
+  },
+  "required": [
+    "path"
+  ]
+}
+```
+
+## find_symbol
+
+Find where a function, class, method, type or variable is defined, by its exact name, from the repository index. Set `references` to also list the lines that use it. Uses that resolve through imports to the definition come first. Uses the index cannot resolve follow; they only share the name, so some may belong to another symbol. When the name is defined in more than one file, give `path` with the defining file you mean, so its uses can be resolved. While the index is still being built, the tool returns no results and says so, because a partial list would look complete. It complements grep and read: grep still finds text that is not a symbol name, such as strings, comments and config keys.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "The symbol's exact name without its container: `run`, not `Store.run`"
+    },
+    "path": {
+      "type": "string",
+      "description": "The file that defines the symbol, when you know it; uses are then resolved to this file's definition"
+    },
+    "references": {
+      "type": "boolean",
+      "description": "Also list where the symbol is used"
+    },
+    "offset": {
+      "type": "integer",
+      "description": "Where to continue, from the `More:` line of the previous answer"
+    }
+  },
+  "required": [
+    "name"
+  ]
+}
+```
+
 ## followup_task
 
 Task/evidence for a direct child: idle starts a turn atomically; running receives it in-place without another slot.

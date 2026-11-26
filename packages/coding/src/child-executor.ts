@@ -43,7 +43,7 @@ import { resolveModelHintTier } from './model-hint-routing.js';
 import { invokeChildWithFallback, readChildTokenUsage } from './child-fallback.js';
 import { createWorkflowWorktree, removeWorkflowWorktree } from './tools/worktree.js';
 import { pinGenerationWorktree, restoreGenerationWorktree, releaseGenerationWorktree } from './worktree-generation.js';
-import { dirname } from 'node:path';
+import { dirname, resolve as resolvePath } from 'node:path';
 import { loadInstructionFiles, formatAgentsForPrompt } from './context/agents-loader.js';
 import {
   parseBareInlineSlashReferences,
@@ -303,10 +303,18 @@ function buildChildRunSession(
   };
 }
 
+/**
+ * The parent's repository intelligence settings, and its repository index when the child works
+ * in the same repository: a child in its own worktree would get answers about other files.
+ */
 function inheritRepoIntelligenceContext(
   options: ChildExecutorOptions,
-): Partial<Pick<KodaXContextOptions, 'repoIntelligenceMode' | 'repoIntelligenceTrace'>> {
-  const inherited: Partial<Pick<KodaXContextOptions, 'repoIntelligenceMode' | 'repoIntelligenceTrace'>> = {};
+  ctx: KodaXToolExecutionContext,
+): Partial<Pick<KodaXContextOptions, 'repoIntelligenceMode' | 'repoIntelligenceTrace' | 'repoIntel'>> {
+  const inherited: Partial<Pick<KodaXContextOptions, 'repoIntelligenceMode' | 'repoIntelligenceTrace' | 'repoIntel'>> = {};
+  if (ctx.repoIntel && resolvePath(ctx.gitRoot ?? resolveExecutionCwd(ctx)) === resolvePath(ctx.repoIntel.root)) {
+    inherited.repoIntel = ctx.repoIntel;
+  }
   if (options.parentOptions.repoIntelligenceMode !== undefined) {
     inherited.repoIntelligenceMode = options.parentOptions.repoIntelligenceMode;
   }
@@ -954,7 +962,7 @@ async function createWorkflowChildDigest(
           skillRegistry: input.scopeCtx.skillRegistry,
           admitLearnedSkillInvocation: input.scopeCtx.admitLearnedSkillInvocation,
           skillScriptRunner: input.scopeCtx.skillScriptRunner,
-          ...inheritRepoIntelligenceContext(input.options),
+          ...inheritRepoIntelligenceContext(input.options, input.scopeCtx),
           ...(input.options.parentOptions.contextDiagnostics !== undefined
             ? { contextDiagnostics: input.options.parentOptions.contextDiagnostics }
             : {}),
@@ -1113,7 +1121,7 @@ async function resolveChildStructuredOutput(input: {
           skillRegistry: input.scopeCtx.skillRegistry,
           admitLearnedSkillInvocation: input.scopeCtx.admitLearnedSkillInvocation,
           skillScriptRunner: input.scopeCtx.skillScriptRunner,
-          ...inheritRepoIntelligenceContext(input.options),
+          ...inheritRepoIntelligenceContext(input.options, input.scopeCtx),
           ...(input.options.parentOptions.contextDiagnostics !== undefined
             ? { contextDiagnostics: input.options.parentOptions.contextDiagnostics }
             : {}),
@@ -1467,7 +1475,7 @@ async function runReadChildBody(
           skillRegistry: scope.ctx.skillRegistry,
           admitLearnedSkillInvocation: scope.ctx.admitLearnedSkillInvocation,
           skillScriptRunner: scope.ctx.skillScriptRunner,
-          ...inheritRepoIntelligenceContext(options),
+          ...inheritRepoIntelligenceContext(options, scope.ctx),
           ...(options.parentOptions.contextDiagnostics !== undefined
             ? { contextDiagnostics: options.parentOptions.contextDiagnostics }
             : {}),
@@ -1784,7 +1792,7 @@ async function runWriteChildBody(
           skillRegistry: childCtx.skillRegistry,
           admitLearnedSkillInvocation: childCtx.admitLearnedSkillInvocation,
           skillScriptRunner: childCtx.skillScriptRunner,
-          ...inheritRepoIntelligenceContext(options),
+          ...inheritRepoIntelligenceContext(options, childCtx),
           ...(options.parentOptions.contextDiagnostics !== undefined
             ? { contextDiagnostics: options.parentOptions.contextDiagnostics }
             : {}),

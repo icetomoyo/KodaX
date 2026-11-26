@@ -180,6 +180,7 @@ export function buildToolExecutionContext(
     // a no-op unless a language server is installed; `KODAX_LSP=0` disables).
     lspService,
     lspNavigationDisabled: lspService === undefined,
+    repoIntel: options.context?.repoIntel,
     executionCwd,
     shellExecution: options.context?.shellExecution,
     sandbox: options.sandbox,

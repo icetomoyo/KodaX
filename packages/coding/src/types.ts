@@ -2172,6 +2172,12 @@ export interface KodaXContextOptions {
    * See `packages/coding/src/lsp/service.ts`.
    */
   lspService?: import('./lsp/service.js').LspService;
+
+  /**
+   * The Host's RepoIntel engine, bound to this Run's repository. Child agents working in the
+   * same repository inherit it.
+   */
+  repoIntel?: import('./repo-intelligence/engine/supervisor.js').RepoIntelQuery;
 }
 
 /**
@@ -3128,6 +3134,9 @@ export interface KodaXToolExecutionContext {
    * A subsequently bound service takes precedence over this snapshot.
    */
   lspNavigationDisabled?: boolean;
+
+  /** The repository index behind `find_symbol` and `file_outline`; without it they are not offered. */
+  repoIntel?: import('./repo-intelligence/engine/supervisor.js').RepoIntelQuery;
 
   /**
    * FEATURE_177 v0.7.42 — per-task read-file-state cache (anti-loop).

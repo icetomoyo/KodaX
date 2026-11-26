@@ -54,6 +54,8 @@ export const REPO_INTELLIGENCE_WORKING_TOOL_NAMES = [
   'relationship_scan',
   'cyclic_dependencies',
   'semantic_lookup',
+  'find_symbol',
+  'file_outline',
 ] as const;
 
 const REPO_INTELLIGENCE_WORKING_TOOL_NAME_SET = new Set<string>(

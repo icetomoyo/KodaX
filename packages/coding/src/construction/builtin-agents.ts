@@ -25,6 +25,8 @@ export const REPO_EXPLORER_TOOL_NAMES: readonly string[] = [
   'grep',
   'code_search',
   'semantic_lookup',
+  'find_symbol',
+  'file_outline',
   'repo_overview',
   'changed_scope',
   'changed_diff',

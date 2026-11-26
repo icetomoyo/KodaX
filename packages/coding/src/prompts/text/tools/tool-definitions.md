@@ -187,6 +187,12 @@ Read diff slices for multiple changed files in one call. Prefer this for large r
 <!-- @key tool.module_context.description -->
 Inspect a module: dependencies/dependents, entry files, top symbols, tests, docs, process handles and evidence. Includes index freshness, confidence and capability warnings when applicable. Use symbol_context for one named symbol, or read for exact file content; the capsule is indexed context, not a substitute for source verification. Set refresh only when the index needs rebuilding.
 
+<!-- @key tool.find_symbol.description -->
+Find where a function, class, method, type or variable is defined, by its exact name, from the repository index. Set `references` to also list the lines that use it. Uses that resolve through imports to the definition come first. Uses the index cannot resolve follow; they only share the name, so some may belong to another symbol. When the name is defined in more than one file, give `path` with the defining file you mean, so its uses can be resolved. While the index is still being built, the tool returns no results and says so, because a partial list would look complete. It complements grep and read: grep still finds text that is not a symbol name, such as strings, comments and config keys.
+
+<!-- @key tool.file_outline.description -->
+List the definitions in one file (classes, functions, methods, types, variables) with their line ranges and the source line that declares each. Use it to see how a file is organized, or to find which lines to read, without reading the whole file. A file in a language the index does not cover is reported as not indexed.
+
 <!-- @key tool.lsp_definition.description -->
 Find the compiler-resolved definition at a file position, through imports, re-exports and overloads. Give 1-based line/character from a recent read. Prefer symbol_context for a named symbol's repo-wide callers/callees. Requires the language's server; returns install guidance if unavailable.
 

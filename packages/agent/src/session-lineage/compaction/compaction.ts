@@ -158,6 +158,8 @@ const PRUNE_PROTECTED_TOOLS: ReadonlySet<string> = new Set([
   'relationship_scan',
   'cyclic_dependencies',
   'semantic_lookup',
+  'find_symbol',
+  'file_outline',
 ]);
 
 /**

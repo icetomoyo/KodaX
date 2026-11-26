@@ -1330,6 +1330,42 @@
       "version"
     ]
   },
+  "tool.find_symbol.input_schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "The symbol's exact name without its container: `run`, not `Store.run`"
+      },
+      "path": {
+        "type": "string",
+        "description": "The file that defines the symbol, when you know it; uses are then resolved to this file's definition"
+      },
+      "references": {
+        "type": "boolean",
+        "description": "Also list where the symbol is used"
+      },
+      "offset": {
+        "type": "integer",
+        "description": "Where to continue, from the `More:` line of the previous answer"
+      }
+    },
+    "required": [
+      "name"
+    ]
+  },
+  "tool.file_outline.input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "File to outline"
+      }
+    },
+    "required": [
+      "path"
+    ]
+  },
   "tool.module_context.input_schema": {
     "type": "object",
     "properties": {

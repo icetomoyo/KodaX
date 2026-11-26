@@ -43,6 +43,8 @@ const READ_TOOL_NAMES = new Set<string>([
   'glob',
   'code_search',
   'semantic_lookup',
+  'find_symbol',
+  'file_outline',
 ]);
 
 /**

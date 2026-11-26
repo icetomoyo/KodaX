@@ -74,6 +74,7 @@ function makeCtx(hasCapabilityRuntime = true, hasWorkflowHost = true): KodaXTool
     // Opt in to the semantic surface so these contracts cover every registered tool;
     // the default surface is pinned separately below.
     parentAgentConfig: { provider: 'test', repoIntelligenceMode: 'full' },
+    repoIntel: { root: process.cwd(), request: async <T>(): Promise<T> => Promise.reject(new Error('not asked here')) },
     ...(hasCapabilityRuntime
       ? { extensionRuntime: {} as KodaXToolExecutionContext['extensionRuntime'] }
       : {}),

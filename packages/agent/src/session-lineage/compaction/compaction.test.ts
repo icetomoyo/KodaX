@@ -974,9 +974,11 @@ describe('FEATURE_183 (v0.7.42): PROTECTED_TOOL_NAMES whitelist expansion', () =
         // joins the read-only repo-intelligence family.
         'cyclic_dependencies',
         'semantic_lookup',
+        'find_symbol',
+        'file_outline',
       ].sort(),
     );
-    expect(PROTECTED_TOOL_NAMES.size).toBe(37);
+    expect(PROTECTED_TOOL_NAMES.size).toBe(39);
   });
 
   it('keeps a recoverable artifact pointer when pruning a capacity-limited result', async () => {
