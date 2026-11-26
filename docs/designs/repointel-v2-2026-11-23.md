@@ -573,3 +573,23 @@ supervisor 增加 `query(root, method, params)`；每个 Run 拿到绑定了自�
 - **名字有多个定义：** 9 次里 8 次带上正确的 `path` 重查。
 
 结论 recommend-ship，工具说明和地图措辞不改。§11.6 留下的问题定了：测试文件的边不降权，地图现在就能把模型引到对的代码。
+
+### 11.10 第 9 层：任务 A/B 结果（2026-11-26）
+
+`benchmark/repo-intel-task-ab.eval.ts`，任务、埋的 bug、隐藏检查和标准答案事先写在 `benchmark/repo-intel-task-ab.cases.ts`。四个任务都由程序评分：T1 改函数签名并更新所有调用方，T2 修权限匹配 bug，T3 列出某个函数的调用方，T4 给消息队列加一个优先级。两组在同一个仓库快照上跑同样的提示词，一组开 v2 引擎（`find_symbol`、`file_outline`、地图），一组只有 grep 加 LSP。deepseek-flash、kimi-for-coding 各 3 次，共 48 次，每次上限 40 轮、20 分钟。用户确认的方案，预算只算非缓存 token：实际 257 万（上限 3,000 万），含缓存读共 5,720 万。端到端评测按 EVAL_GUIDELINES 属于 Layer 3.5，只能看有没有明显收益，不能证明哪组更好。
+
+前两版作废：r1 提示词没说从仓库根跑 vitest，模型在包目录里撞上已知的假失败；r2 vite-node 的 `NODE_ENV=development` 传给了 Agent 的 shell 和评分。r3 里 deepseek 关闭组的 T4 前两次也作废重跑：测试仓库的 `packages/llm/dist` 被之前的 Run 删了，类型检查报错在没改过的文件上。
+
+| | 关闭（grep + LSP） | 开启（v2） |
+|---|---|---|
+| 通过（严格） | 20/24 | 19/24 |
+| 轮次合计 | 654 | 695（+6%） |
+| token 合计 | 2,570 万 | 3,140 万（+22%） |
+| 非缓存 token | 115 万 | 141 万（+23%） |
+
+- **T3 两组分不开：** 两组的失败都只漏了 `runtime.ts` 自己。有的把第 1026 行（在 `getRepoPreturnBundle` 里）误判成递归，有的认为定义文件不算调用方，后者按题意也说得通。不要求 `runtime.ts` 时两组都是 12/12。
+- **索引工具很少用：** 开启组 24 次里只有 5 次调用了 `find_symbol`，`file_outline` 一次没用。其余都靠 grep 和 read。有一次没带 `path` 查，没理会"给 `path` 按 import 解析"的提示，最后手动排除了真正的调用方。
+- **多出的 token 不是地图带来的：** 地图约 1,000 token，第一次请求之后就走缓存。差别主要来自轨迹变长，比如 kimi 的 T1 开启组中位 32 轮，关闭组 23 轮。T1、T2、T4 有 17 次跑满了 40 轮上限，轮次和 token 都被截断。
+- **发现一个和 A/B 无关的产品 bug：** 在 CRLF 文件上，模型写的多行 `old_string` 用 LF，精确匹配一定失败，退到按行归一化匹配。`text-anchor.ts` 返回的范围包含末行的换行符，替换后下一行就接到上一行末尾。两组都受影响：每个改代码的 Run 里有 1–19 次这样的编辑，deepseek 开启组 T4 第 3 次就因此失败。
+
+结论 recommend-iterate：没有达到 §11 的退出条件（比 grep 加 LSP 更省轮次、更省 token，且成功率不降），v2 留在 `KODAX_REPO_INTELLIGENCE_ENGINE=v2` 开关后面，不进默认。工具说明和地图措辞不改。阶段 3、4 是否继续由用户决定。完整评审在评测目录 `repointel-p2-ab/r3/review.md`。
