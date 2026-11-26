@@ -160,6 +160,27 @@ export interface RuntimeDaemonDispatcherOptions {
   readonly reverseCalls?: boolean;
   readonly durableHostToolInvocations?: boolean;
   readonly management?: RuntimeDaemonManagementController;
+  /**
+   * Told once per connection when a v1 client first asks for product work. The
+   * v2 peer runs v1 methods in-process and leaves this unset.
+   */
+  readonly onLegacyProductUse?: (client: RuntimeLegacyClient) => void;
+}
+
+export interface RuntimeLegacyClient {
+  /** The client's instance id, or a per-connection id when it sent none. */
+  readonly id: string;
+  readonly name?: string;
+  readonly version?: string;
+}
+
+/**
+ * KodaX's own launcher and health probe only check and manage a Host over v1,
+ * and the transport acknowledges or cancels requests by itself. Anything else is product work.
+ */
+function isLegacyProductMethod(method: string): boolean {
+  return method !== "ping" && !method.startsWith("request.")
+    && !method.startsWith("runtime.") && !method.startsWith("daemon.");
 }
 
 export interface RuntimeDaemonDispatcher {
@@ -542,6 +563,7 @@ export function createRuntimeDaemonDispatcher(
   let noticeIdentity = principalId;
   let clientName: string | undefined;
   let clientVersion: string | undefined;
+  let legacyUseReported = false;
   const grantedScopes = new Set(
     options.grantedScopes ?? ALL_RUNTIME_GRANTED_SCOPES,
   );
@@ -686,6 +708,11 @@ export function createRuntimeDaemonDispatcher(
         // The owner holds every power on its own machine and sends a credential with each turn, so only a backend's use is recorded.
         const trusted = options.role === 'service' ? runtimeTrustedUse(request.method, request.params) : undefined;
         if (trusted !== undefined) reportHostSecurityEvent({ event: 'trusted_use', actor: securityActor(options, clientName), method: request.method, params: trusted });
+        if (!legacyUseReported && connectionPurpose === 'client' && isLegacyProductMethod(request.method)) {
+          legacyUseReported = true;
+          options.onLegacyProductUse?.({ id: noticeIdentity, ...(clientName !== undefined ? { name: clientName } : {}),
+            ...(clientVersion !== undefined ? { version: clientVersion } : {}) });
+        }
       }
       if (inFlightRequests.has(request.id)) {
         throw daemonError(

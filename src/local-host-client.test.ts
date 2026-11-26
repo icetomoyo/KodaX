@@ -57,6 +57,9 @@ it('starts the Host of a home, and starts it again and follows the Session when 
     }, { timeout: 30_000, interval: 200 });
     await vi.waitFor(() => expect(views.length).toBeGreaterThan(1), { timeout: 30_000, interval: 100 });
     expect(states).toEqual(['connected', 'reconnecting', 'connected']);
+    // Starting and following the Host still checks it over v1, which is not product use.
+    expect(fs.readFileSync(paths.logFile, 'utf8')).toContain('Runtime daemon ready.');
+    expect(fs.readFileSync(paths.logFile, 'utf8')).not.toContain('Host protocol v1');
   } finally {
     client.close();
   }

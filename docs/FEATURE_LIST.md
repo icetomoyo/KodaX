@@ -2779,6 +2779,23 @@ fixed GitHub binary archive sidecar omission before tagging.
   `runtime.daemon.inspect` and shutdown on it. Owner decision (2026-11-24):
   keep a minimal v1 fallback (inspect and shutdown) only for such Hosts, and
   delete it with v1 in `v0.7.100`.
+- Progress (2026-11-26): the Host logs the deprecation warning, once per v1
+  client instance, on the client's first product request over v1. `ping`,
+  `runtime.*`, `daemon.*` and the transport's `request.*` frames do not count,
+  and probe connections never warn. So the warning no longer waits for the
+  launcher: KodaX's own v1 traffic only starts, probes and stops Hosts.
+  `src/local-host-client.test.ts` checks that a real start and restart leave
+  no warning in the Host log.
+- Launcher scope (2026-11-26): moving the launcher and the health probe to v2
+  is more than a wire swap. Their v1 `initialize` carries what v2 has no field
+  for yet: the lifetime the client asks for (`daemonLifecycle`, idle exit),
+  startup admission (`connectionPurpose: 'startup'`), the Host's retention,
+  and the capability flags that decide whether to replace a Host. It needs
+  those added to v2 and a rewrite of the startup coordination in
+  `src/sdk-runtime.ts` (`connectKodaXRuntimeInternal` and its helpers) and
+  `src/runtime-daemon/process.ts`. It moves with this feature, before the
+  v1 deletion. A v2 Host that lacks the new fields is handled like any older
+  Host: replaced when idle, used as it is when busy.
 - Risk: the window counts from the release that ships v2. If v2 ships after
   `v0.7.98`, fewer than two versions carry both protocols; recheck the line
   then.

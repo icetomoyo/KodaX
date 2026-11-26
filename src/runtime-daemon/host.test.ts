@@ -485,6 +485,60 @@ describe("runtime daemon host", () => {
     await waitForClientCount(v1, 1);
   });
 
+  it("logs the v1 deprecation once per client instance that uses v1 for product work", async () => {
+    const paths = resolveRuntimeDaemonPaths(tempHome(), "default");
+    const runtime = makeRuntime();
+    const lock = tryAcquireRuntimeDaemonLock(paths, {
+      runtimeId: runtime.identity.runtimeId,
+      pid: process.pid,
+      createdAt: runtime.identity.startedAt,
+    });
+    if (!lock) throw new Error("Expected daemon lock for the deprecation test.");
+    const host = await startRuntimeDaemonHost({ runtime, paths, endpoint: await makeTestEndpoint(), lock });
+    cleanupTasks.push(() => host.close());
+    const token = readRuntimeDaemonToken(paths);
+    if (token === undefined) throw new Error("Expected a daemon token for the deprecation test.");
+    const warnings = (): number => fs.readFileSync(paths.logFile, "utf8")
+      .split("\n").filter(line => line.includes("Host protocol v1")).length;
+    const v1 = async (clientInfo?: Record<string, unknown>, connectionPurpose?: string) => {
+      const transport = await createRuntimeDaemonSocketClientTransport(host.endpoint);
+      cleanupTasks.push(async () => {
+        await transport.close?.();
+      });
+      await transport.request("initialize", { profile: "default", token,
+        ...(clientInfo ? { clientInfo } : {}), ...(connectionPurpose ? { connectionPurpose } : {}) });
+      return transport;
+    };
+
+    // KodaX's own launcher and health probe only check and manage the Host over v1.
+    const probe = await v1(undefined, "probe");
+    await probe.request("runtime.status");
+    const launcher = await v1({ name: "kodax-host-launcher", instanceId: "launcher-1" });
+    await launcher.request("runtime.identity");
+    await launcher.request("daemon.preflight");
+    const v2 = await connectHostRpc(dialRuntimeDaemonHostRpc(host.endpoint), {
+      client: { name: "v2-test", version: "1.0.0", instanceId: "v2-client-1" }, auth: { scheme: "ipc", token } });
+    cleanupTasks.push(async () => v2.close());
+    await v2.request("session.list", {}).catch(() => undefined);
+    expect(warnings()).toBe(0);
+
+    const embedder = { name: "old-embedder", version: "2.1.0", instanceId: "embedder-1" };
+    const first = await v1(embedder);
+    await first.request("session.list", {}).catch(() => undefined);
+    await first.request("session.list", {}).catch(() => undefined);
+    await first.close?.();
+    const again = await v1(embedder);
+    await again.request("session.list", {}).catch(() => undefined);
+    expect(warnings()).toBe(1);
+    const log = fs.readFileSync(paths.logFile, "utf8");
+    expect(log).toContain("old-embedder");
+    expect(log).toContain("0.7.100");
+
+    const other = await v1({ name: "other-embedder", instanceId: "embedder-2" });
+    await other.request("session.list", {}).catch(() => undefined);
+    expect(warnings()).toBe(2);
+  });
+
   it("serves v2 over the network to the JWT subjects host.json admits, and stays up for them", async () => {
     const home = tempHome();
     const paths = resolveRuntimeDaemonPaths(home, "default");

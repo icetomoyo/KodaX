@@ -241,6 +241,10 @@ All notable changes to this project will be documented in this file.
   `@kodax-ai/kodax`, `ensureKodaXRuntime`, and KodaX CLIs or Zed ACP from
   before the v2 release) must move to the v2 client
   (`ensureKodaXHostClient` from `@kodax-ai/kodax/client`) by then.
+- The Host now logs this as a warning in its log, once per v1 client
+  instance, when the client first asks for product work over v1. Starting,
+  probing and stopping a Host over v1 does not warn, so current KodaX
+  clients stay quiet.
 
 ### Removed
 

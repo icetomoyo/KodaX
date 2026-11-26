@@ -17,6 +17,7 @@ import {
   createRuntimeDaemonDispatcher,
   createRuntimeDaemonRunResultStore,
   type RuntimeDaemonDispatcherOptions,
+  type RuntimeLegacyClient,
 } from './server.js';
 import { describeProxyEnvironmentGap } from '../proxy-environment.js';
 import {
@@ -140,6 +141,7 @@ export async function startRuntimeDaemonHost(
     scheduleStop();
   };
   const runResults = createRuntimeDaemonRunResultStore();
+  const noticeLegacyClient = createLegacyClientNotice();
   const reverseBridgeHub = createRuntimeDaemonReverseBridgeHub({
     invocationStateFile: path.join(options.paths.rootDir, 'host-tool-invocations.json'),
   });
@@ -185,7 +187,8 @@ export async function startRuntimeDaemonHost(
     const keyService = options.providerKeys === undefined ? {} : { providerKeys: options.providerKeys };
     server = await createRuntimeDaemonSocketServer({
       endpoint: options.endpoint,
-      createDispatcher: (notify, disconnect) => createRuntimeDaemonDispatcher({ ...dispatcherOptions, notify, disconnect }),
+      createDispatcher: (notify, disconnect) => createRuntimeDaemonDispatcher({ ...dispatcherOptions, notify, disconnect,
+        onLegacyProductUse: noticeLegacyClient }),
       createHostRpcPeer: (send, disconnect, congested) => createRuntimeDaemonHostRpcPeer({
         protocol,
         dispatcher: dispatcherOptions,
@@ -572,6 +575,22 @@ function leavesOnlyActorTreesForRecovery(error: unknown): boolean {
   const errors = error instanceof AggregateError ? error.errors : [error];
   return errors.length > 0 && errors.every(item =>
     item instanceof Error && 'code' in item && item.code === 'actor_shutdown_not_persisted');
+}
+
+/** Warns once per v1 client instance, so a client that reconnects does not repeat it. */
+function createLegacyClientNotice(): (client: RuntimeLegacyClient) => void {
+  const noticed = new Set<string>();
+  return client => {
+    if (noticed.has(client.id)) return;
+    // Clients without an instance id get a fresh id per connection; bound what a long-lived Host keeps.
+    if (noticed.size >= 1_000) noticed.clear();
+    noticed.add(client.id);
+    emitKodaXDiagnostic({
+      source: 'runtime.daemon.protocol-v1', level: 'warn',
+      message: 'A client uses Host protocol v1, which is removed in KodaX 0.7.100. Move it to the v2 client (ensureKodaXHostClient from @kodax-ai/kodax/client).',
+      detail: { client: client.name ?? 'unnamed', ...(client.version !== undefined ? { version: client.version } : {}) },
+    });
+  };
 }
 
 /** @internal Also used before host publication for the existing owner identity probes. */
