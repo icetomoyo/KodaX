@@ -167,7 +167,7 @@ describe('FEATURE_263 unified review normalization', () => {
   it.each([
     { claimKind: 'fact' },
     { claimKey: 'project.release-check' },
-    { claimKind: 'fact', claimKey: 'not a stable key' },
+    { claimKind: 'fact', claimKey: '   ' },
   ])('rejects a mutating Memory action without a stable claim identity: %o', (claim) => {
     expect(() => normalizeUnifiedLearningReview({
       cacheDomain: 'learning-review', memory: memoryInput, evidence: evidence(),
@@ -187,6 +187,66 @@ describe('FEATURE_263 unified review normalization', () => {
         }],
       },
     })).toThrow(/invalid Memory plan/i);
+  });
+
+  const writeAction = (overrides: Record<string, unknown>) => ({
+    action: 'write_memdir',
+    targetRefIds: [],
+    summary: 'Remember the release method.',
+    rationale: 'It is reusable.',
+    confidence: 'high',
+    risk: 'low',
+    requiresApproval: true,
+    proposedBody: 'Run the release check.',
+    claimKind: 'procedure',
+    claimKey: 'release.check',
+    ...overrides,
+  });
+
+  it('drops target refs outside the frozen candidate set, so a new claim cited with its evidence is not rejected', () => {
+    const candidate = {
+      ref: {
+        kind: 'memdir', id: 'memdir:release.md', scope: 'project', owner: 'project', lifecycle: 'active',
+        authority: 'approved', visibility: 'prompt_safe', sourceRefs: [], relatedRefs: [],
+      },
+      warnings: [],
+    } as const;
+    const result = normalizeUnifiedLearningReview({
+      cacheDomain: 'learning-review', memory: { ...memoryInput, candidateRefs: [candidate] }, evidence: evidence(),
+    }, {
+      memoryPlan: {
+        actions: [
+          writeAction({ targetRefIds: ['tool:test', 'digest-1'] }),
+          writeAction({ action: 'patch_memdir', targetRefIds: ['memdir:release.md', 'tool:test'] }),
+        ],
+        warnings: [],
+      },
+    });
+
+    expect(result.memoryPlan.actions.map((action) => action.targetRefIds)).toEqual([[], ['memdir:release.md']]);
+    expect(result.memoryPlan.warnings).toContain('dropped target refs outside the candidate set: tool:test, digest-1');
+  });
+
+  it.each([
+    ['procedure/api-client-regen', 'procedure.api-client-regen'],
+    ['repo:test-framework=vitest', 'repo:test-framework-vitest'],
+    ['Episode:src/io.ts:rename tmp', 'episode:src.io.ts:rename-tmp'],
+  ])('keeps a Memory action whose claim key %s has unsupported characters, as %s', (claimKey, expected) => {
+    const result = normalizeUnifiedLearningReview({
+      cacheDomain: 'learning-review', memory: memoryInput, evidence: evidence(),
+    }, { memoryPlan: { actions: [writeAction({ claimKey })], warnings: [] } });
+
+    expect(result.memoryPlan.actions[0]?.claimKey).toBe(expected);
+  });
+
+  it('gives a claim key with no supported characters a stable hashed key', () => {
+    const normalize = () => normalizeUnifiedLearningReview({
+      cacheDomain: 'learning-review', memory: memoryInput, evidence: evidence(),
+    }, { memoryPlan: { actions: [writeAction({ claimKey: '发布流程' })], warnings: [] } });
+
+    const key = normalize().memoryPlan.actions[0]?.claimKey;
+    expect(key).toMatch(/^procedure\.[0-9a-f]{12}$/u);
+    expect(normalize().memoryPlan.actions[0]?.claimKey).toBe(key);
   });
 
   it('removes local paths, secrets, and prompt-control text from provider evidence', () => {

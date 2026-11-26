@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import type { KodaXMemoryOutcomeDigest } from '../types.js';
 import type {
   MemoryReviewDraftAction,
@@ -287,6 +289,7 @@ function normalizeProviderMemoryPlan(
   input: MemoryReviewModelInput,
   digest: KodaXMemoryOutcomeDigest,
 ): MemoryReviewPlan | undefined {
+  value = withCanonicalClaimKeys(value);
   if (isMemoryReviewPlan(value)) return value;
   if (!isRecord(value)
     || !Array.isArray(value.actions)
@@ -371,20 +374,62 @@ function bindMemoryPlanToInput(
   // episode stay in the human approval queue. The deterministic floor
   // overrides the reviewer's self-assessed low risk; medium/high are kept.
   const floorToHumanQueue = qualification.failedWithLesson === true;
+  // Models cite the episode's evidence as a target. Only existing Memory can be a target, and the
+  // governed apply rejects the whole write for any other ref, so drop those refs and say so.
+  const candidateIds = new Set(input.candidateRefs.map((candidate) => candidate.ref.id));
+  const dropped = unique(plan.actions.flatMap((action) => action.targetRefIds.filter((id) => !candidateIds.has(id))));
   return {
     ...plan,
     trigger: input.trigger,
     createdAt: digest.createdAt,
     sourceRefs: input.sourceRefs,
     candidateRefs: input.candidateRefs,
-    warnings: unique([...input.warnings, ...plan.warnings]),
+    warnings: unique([
+      ...input.warnings,
+      ...plan.warnings,
+      ...(dropped.length === 0 ? [] : [`dropped target refs outside the candidate set: ${dropped.join(', ')}`]),
+    ]),
     episodeDigest: digest,
     actions: plan.actions.map((action) => ({
       ...action,
+      targetRefIds: action.targetRefIds.filter((id) => candidateIds.has(id)),
       ...(action.claimKey === undefined ? {} : { claimKey: action.claimKey.trim().toLowerCase() }),
       ...(floorToHumanQueue && action.risk === 'low' ? { risk: 'medium' as const } : {}),
     })),
   };
+}
+
+const SUPPORTED_CLAIM_KEY = /^[a-z0-9._:-]{1,160}$/u;
+
+/** Canonicalizes provider claim keys before validation, so one odd key does not void the whole review. */
+function withCanonicalClaimKeys(value: unknown): unknown {
+  if (!isRecord(value) || !Array.isArray(value.actions)) return value;
+  return {
+    ...value,
+    actions: value.actions.map((action: unknown) => (
+      isRecord(action) && typeof action.claimKey === 'string'
+        ? { ...action, claimKey: canonicalClaimKey(action.claimKey, action.claimKind) }
+        : action
+    )),
+  };
+}
+
+/**
+ * `procedure/api-client` becomes `procedure.api-client` and `a=b` becomes `a-b`. A key that loses
+ * non-ASCII text, such as a Chinese title, gets a hash of the original so distinct titles stay
+ * distinct and the same title maps to the same claim in every episode.
+ */
+function canonicalClaimKey(key: string, claimKind: unknown): string {
+  const trimmed = key.trim().toLowerCase();
+  if (trimmed.length === 0 || SUPPORTED_CLAIM_KEY.test(trimmed)) return trimmed;
+  const mapped = trimmed
+    .replace(/[/\\]+/gu, '.')
+    .replace(/[^a-z0-9._:-]+/gu, '-')
+    .replace(/^[-.]+|[-.]+$/gu, '');
+  if (mapped.length > 0 && !/[^\x00-\x7f]/u.test(trimmed)) return mapped.slice(0, 160);
+  const hash = createHash('sha256').update(trimmed).digest('hex').slice(0, 12);
+  const prefix = mapped.length > 0 ? mapped : (typeof claimKind === 'string' ? claimKind : 'claim');
+  return `${prefix.slice(0, 147)}.${hash}`;
 }
 
 function unique(values: readonly string[]): readonly string[] {

@@ -516,7 +516,18 @@ export async function pack(stage: Stage, rawRoot: string = REVIEWER_RAW_ROOT): P
   return { pairs: Object.keys(unblind).length, missing };
 }
 
-/** Mechanical scores, Skill decisions and output sizes per cell; read only after the blind review is on disk. */
+/** What the governed apply did with the review: decision kinds and counts, or why it never got there. */
+export function applySummary(replay: Replay): string {
+  if (replay.status !== 'applied') return replay.status;
+  const counts = new Map<string, number>();
+  for (const decision of replay.decisions) {
+    const kind = decision.slice(0, decision.indexOf(':'));
+    counts.set(kind, (counts.get(kind) ?? 0) + 1);
+  }
+  return counts.size === 0 ? 'none' : [...counts].map(([kind, count]) => `${kind}:${count}`).join(' ');
+}
+
+/** Mechanical scores, governed-apply results, Skill decisions and output sizes per cell; read only after the blind review is on disk. */
 export async function tally(stage: Stage, rawRoot: string = REVIEWER_RAW_ROOT): Promise<readonly string[]> {
   const rows: string[] = [];
   for (const cell of plannedCells(stage)) {
@@ -525,10 +536,12 @@ export async function tally(stage: Stage, rawRoot: string = REVIEWER_RAW_ROOT): 
     const item = CASE_BY_ID.get(cell.caseId)!;
     const scored = scoreCell(item, result.response);
     const output = result.response.usage.outputTokens;
+    const replay = await replayCell(item, result.response, `tally-${cell.key}`);
     rows.push([
       cell.key,
       scored.verdict,
       scored.reasons.join('; '),
+      `apply=${applySummary(replay)}`,
       cell.arm === 'A' ? `skill=${skillDecision(result.response)}` : '',
       `out=${output}${output > PRODUCTION_OUTPUT_CAP ? ' (over the production cap)' : ''}`,
     ].filter((part) => part.length > 0).join(' | '));

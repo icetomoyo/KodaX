@@ -707,7 +707,7 @@ describe('memory runtime hooks', () => {
     });
   });
 
-  it('commits one fenced unified review into Memory', async () => {
+  it('commits one fenced unified review into Memory, with evidence cited as a target and a slashed key', async () => {
     const cwd = await createTempDir('kodax-memory-runtime-unified-');
     const home = await createTempDir('kodax-memory-runtime-unified-home-');
     cleanupDirs.push(cwd, home);
@@ -801,7 +801,8 @@ describe('memory runtime hooks', () => {
             candidateRefs: input.memory.candidateRefs,
             actions: [{
               action: 'write_memdir',
-              targetRefIds: [],
+              // Models cite the episode evidence here; it must not void the write (Issue 446).
+              targetRefIds: ['check:release'],
               summary: 'Apply verified release memory',
               rationale: 'The release evidence passed.',
               confidence: 'high',
@@ -809,7 +810,8 @@ describe('memory runtime hooks', () => {
               requiresApproval: true,
               proposedBody: 'Run the complete release checks before publishing.',
               claimKind: 'procedure',
-              claimKey: 'project.release-checks',
+              // An unsupported character must not void the review (Issue 447).
+              claimKey: 'project/release-checks',
             }, {
               action: 'write_memdir',
               targetRefIds: [],

@@ -47,6 +47,67 @@ not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
 
+## Issue 447: One badly formed Memory key throws away the whole episode review
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: `v0.7.85` (`562572371`, unified episode learning review)
+- Created / Resolved: 2026-11-26 / 2026-11-26
+- Fixed: unreleased (after `v0.7.97-rc.2`)
+- Reported by: FEATURE_309 reviewer A/B (`f309-reviewer-r2`)
+
+### Original Problem
+
+The episode reviewer names each Memory claim with a `claimKey`, which must
+match `[a-z0-9._:-]{1,160}`. Models often write keys such as
+`procedure/api-client-regen` or `repo:test-framework=vitest`. The normalizer
+rejected the whole plan when any one action had such a key, so every other
+write from that episode was lost too. In the reviewer A/B, 6 of 48 reviews
+were discarded this way.
+
+### Resolution
+
+- `normalizeProviderMemoryPlan` in `memory-control/unified-review.ts` maps a
+  key to the supported form before validation: lower case, `/` and `\` to
+  `.`, other unsupported characters to `-`. A key with non-ASCII text keeps
+  a readable prefix plus a short hash, so different keys stay different.
+- An empty key is still invalid.
+- Tests: `unified-review.test.ts` (key mappings, stable hashed key) and
+  `memory-runtime.test.ts` (a slashed key commits into Memory).
+
+## Issue 446: Automatic Memory writes are rejected when the reviewer cites evidence as a target
+
+- Priority: High
+- Status: Resolved
+- Introduced: `v0.7.85` (`562572371`, unified episode learning review)
+- Created / Resolved: 2026-11-26 / 2026-11-26
+- Fixed: unreleased (after `v0.7.97-rc.2`)
+- Reported by: FEATURE_309 reviewer A/B (`f309-reviewer-r2`)
+
+### Original Problem
+
+`targetRefIds` in the episode reviewer's plan should only name existing
+Memory records the action updates. Models also put evidence there: tool
+results, verifier checks, digest ids. The governed apply rejects any action
+whose target is outside the frozen candidate set ("review action target was
+not in the frozen candidate set"). When a project had no Memory yet, nearly
+every automatic write was rejected. Earlier evals scored the reviewer's raw
+output, not the apply result, so this went unnoticed.
+
+### Resolution
+
+- `bindMemoryPlanToInput` drops target ids that are not in the review's
+  candidate set and records them in the plan warnings. The controller guard
+  is unchanged.
+- The FEATURE_309 reviewer eval tally now reports the governed-apply result
+  of each review. Replaying the recorded `f309-reviewer-r2` responses: every
+  review applies, and each method case lands at least one Memory write. The
+  remaining rejections are non-write actions and patches with no existing
+  record to patch.
+- Tests: `unified-review.test.ts` (out-of-set targets dropped with a warning)
+  and `memory-runtime.test.ts` (an evidence target no longer blocks the
+  commit).
+
 ## Issue 445: A Run with no reasoning setting fails on a model that always thinks
 
 - Priority: Medium
@@ -4854,6 +4915,8 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 447 | Medium | Resolved | One badly formed Memory key throws away the whole episode review | `v0.7.85` | unreleased (after `v0.7.97-rc.2`) | 2026-11-26 | 2026-11-26 |
+| 446 | High | Resolved | Automatic Memory writes are rejected when the reviewer cites evidence as a target | `v0.7.85` | unreleased (after `v0.7.97-rc.2`) | 2026-11-26 | 2026-11-26 |
 | 445 | Medium | Resolved | A Run with no reasoning setting fails on a model that always thinks | `v0.7.57` | unreleased (after `v0.7.97-rc.2`) | 2026-11-26 | 2026-11-26 |
 | 444 | High | Resolved | A multi-line edit on a CRLF file joins the next line onto the replacement | `v0.7.15` | unreleased (after `v0.7.97-rc.2`) | 2026-11-26 | 2026-11-26 |
 | 443 | Low | Open | Side chat gaps left after FEATURE_307 | FEATURE_307 (unreleased, `KodaX-next-dev`) | — | 2026-11-24 | — |
@@ -20644,12 +20707,20 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 320 (48 Open including 1 needs-info, 1 ready, 269 Resolved, 0 Partially Resolved, 1 Won't Fix)
+- Total: 322 (48 Open including 1 needs-info, 1 ready, 271 Resolved, 0 Partially Resolved, 1 Won't Fix)
 - Ready: 1 (420)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-26: Issues 446 and 447
+
+- The episode reviewer's out-of-set targets are dropped with a warning, so
+  automatic Memory writes are no longer rejected for citing evidence
+  (Issue 446).
+- A badly formed Memory key is mapped to a supported one instead of
+  discarding the whole review (Issue 447).
 
 ### 2026-11-26: Issues 444 and 445
 
