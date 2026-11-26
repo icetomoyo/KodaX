@@ -218,6 +218,7 @@ import {
   appendSessionLineageLabel,
   clearCapabilityCache,
   extractAssistantTextFromMessage,
+  importApprovedLearnedSkills,
   installWindowsProcessHelper,
   isAskUserUnanswered,
   readLatestGoalState,
@@ -4613,6 +4614,9 @@ async function createKodaXRuntimeInternal(
   const configHome = options.homeDir
     ? path.join(path.resolve(options.homeDir), ".kodax")
     : replApi.KODAX_DIR;
+  // Learned Skills no longer load at runtime; every Host entry copies the approved
+  // ones into user Skills once, before any Session discovers Skills. Never throws.
+  await importApprovedLearnedSkills(configHome);
   const sessionsDir = resolveRuntimeSessionsDir(options);
   const initializationKey = JSON.stringify([configHome, path.resolve(sessionsDir ?? path.join(configHome, 'sessions'))]);
   const previousInitialization = pendingRuntimeInitializationCleanup.get(initializationKey);

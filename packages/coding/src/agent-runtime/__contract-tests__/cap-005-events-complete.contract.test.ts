@@ -250,38 +250,6 @@ describe('CAP-005: onComplete event contract', { timeout: 30_000 }, () => {
     expect(onComplete).toHaveBeenCalledOnce();
   });
 
-  it('CAP-EVENTS-COMPLETE-001e: waits for asynchronous result finalization', async () => {
-    registerModelProvider(PROVIDER_NAME, () => new CompleteEventProvider('success'));
-    const order: string[] = [];
-    const onComplete = vi.fn(() => order.push('complete'));
-
-    const resultPromise = runLeafAgent(
-      {
-        provider: PROVIDER_NAME,
-        model: 'baseline-model',
-        events: { onComplete },
-        context: {
-          // Keep this injected finalizer authoritative instead of installing
-          // the root run's learned-Skill binding callback.
-          currentAgentId: 'cap-005-finalization-child',
-          completeLearnedSkillOutcomes: async () => {
-            order.push('finalization:start');
-            await new Promise<void>((resolve) => setImmediate(resolve));
-            order.push('finalization:end');
-          },
-        },
-      },
-      'do thing',
-    );
-
-    await expect(resultPromise).resolves.toMatchObject({
-      success: true,
-      lastText: 'done',
-    });
-    expect(order).toEqual(['finalization:start', 'finalization:end', 'complete']);
-    expect(onComplete).toHaveBeenCalledOnce();
-  });
-
   it('CAP-EVENTS-COMPLETE-001c: error terminal fires `onError` (not onComplete) — mutually exclusive per CAP-084 contract', async () => {
     registerModelProvider(PROVIDER_NAME, () => new CompleteEventProvider('throw'));
     const onComplete = vi.fn();

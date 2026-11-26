@@ -2005,28 +2005,6 @@ export interface KodaXContextOptions {
     readonly modelOverride?: string;
     readonly additionalContext?: string;
   }>;
-  /** Runtime-owned complete formal-name inventory used to prevent learned Skill shadowing. */
-  protectedFormalSkillNames?: readonly string[];
-  /**
-   * Opaque root-run binding used to correlate learned Skill usage with the
-   * exact Memory episode produced by that run.
-   *
-   * @internal
-   */
-  learnedSkillBindingId?: string;
-  /** Runtime-owner admission for exact learned Skill revisions. */
-  admitLearnedSkillInvocation?: (input: {
-    readonly sessionId: string;
-    readonly capabilityId: string;
-    readonly revision: number;
-    readonly fingerprint: string;
-  }) => Promise<{ readonly invocationId: string }>;
-  /** Runtime-owner outcome correlation for learned Skill canaries. */
-  completeLearnedSkillOutcomes?: (input: {
-    readonly sessionId: string;
-    readonly outcome: 'verified_success' | 'credible_negative' | 'inconclusive';
-    readonly evidenceRefs: readonly string[];
-  }) => Promise<void>;
   /** Remote-runtime broker for explicitly admitted, OS-sandboxed Skill scripts. */
   skillScriptRunner?: KodaXSkillScriptRunner;
   /** @internal Run-owned policy check; never executes hooks or grants read authority. */
@@ -2909,8 +2887,6 @@ export interface KodaXToolExecutionContext {
   skillRegistry?: ISkillRegistry;
   /** @internal Activates the same run policies used by explicit Skill invocation. */
   activateModelSkill?: KodaXContextOptions['activateModelSkill'];
-  /** Runtime-owner admission for exact learned Skill revisions. */
-  admitLearnedSkillInvocation?: KodaXContextOptions['admitLearnedSkillInvocation'];
   /** Present only when the host admitted exact Skill scripts for this run. */
   skillScriptRunner?: KodaXSkillScriptRunner;
   /** Working directory used to resolve relative paths and execute shell commands. */

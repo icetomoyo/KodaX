@@ -20,7 +20,6 @@ export type {
   SkillResult,
   SkillArtifact,
   SkillPathsConfig,
-  LearnedSkillDiscoveryConfig,
   ISkillRegistry,
   IVariableResolver,
 } from './types.js';

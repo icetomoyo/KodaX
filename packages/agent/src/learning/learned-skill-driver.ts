@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { link, lstat, mkdir, open, readFile, rm } from 'node:fs/promises';
+import { link, lstat, mkdir, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+
+import { emitKodaXDiagnostic } from '../diagnostics.js';
 
 import type {
   LearnedCapabilityCanary,
@@ -13,6 +15,7 @@ import {
   LearningCapabilityError,
   assertLearnedCapabilityTransition,
 } from './center-types.js';
+import { LearnedAreaStore } from './learned-area-store.js';
 import { isLearnedCapabilityRecordV2 } from './learned-skill.js';
 
 export interface CreateLearnedSkillActionDriverOptions {
@@ -66,6 +69,55 @@ export function createLearnedSkillActionDriver(
       );
     },
   };
+}
+
+/**
+ * One-time copy of every approved (`active_learned`) learned Skill into
+ * `<configHome>/skills/<slug>/SKILL.md`, because learned Skills no longer load
+ * at runtime. Existing user Skills are never overwritten, `learned/` is only
+ * read, and the marker in the user Skills root makes later calls a no-op.
+ * Failures become diagnostics; nothing here may block startup.
+ */
+export async function importApprovedLearnedSkills(configHome: string): Promise<void> {
+  const learnedAreaRoot = join(resolve(configHome), 'learned');
+  const userSkillsRoot = join(resolve(configHome), 'skills');
+  const marker = join(userSkillsRoot, '.learned-skills-imported.json');
+  const report = (level: 'info' | 'warn', message: string, detail?: unknown) =>
+    emitKodaXDiagnostic({ source: 'agent:learning', level, message, detail });
+  try {
+    if (await pathExists(marker) || !await pathExists(learnedAreaRoot)) return;
+    const approved = (await new LearnedAreaStore(learnedAreaRoot).listCapabilities())
+      .filter(isLearnedCapabilityRecordV2)
+      .filter((record) => record.lifecycle === 'active_learned');
+    const imported: string[] = [];
+    const skipped: string[] = [];
+    for (const record of approved) {
+      try {
+        await promoteExactArtifact({ learnedAreaRoot, learnedAreaKind: 'global', userSkillsRoot }, record);
+        imported.push(record.slug);
+      } catch (error) {
+        skipped.push(record.slug);
+        report('warn', `Learned Skill ${record.slug} was not copied to user Skills.`,
+          error instanceof Error ? error.message : String(error));
+      }
+    }
+    await mkdir(userSkillsRoot, { recursive: true });
+    await writeFile(marker, `${JSON.stringify({ importedAt: new Date().toISOString(), imported, skipped }, null, 2)}\n`, 'utf8');
+    if (imported.length > 0) report('info', `Copied ${imported.length} approved learned Skills to user Skills.`, { imported });
+  } catch (error) {
+    report('warn', 'Approved learned Skills could not be copied to user Skills; retrying next start.',
+      error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error) {
+    if (isFileError(error, 'ENOENT')) return false;
+    throw error;
+  }
 }
 
 function requireLearnedSkill(

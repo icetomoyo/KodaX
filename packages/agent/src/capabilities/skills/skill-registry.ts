@@ -22,8 +22,6 @@ import { resolveSkillContent } from './skill-resolver.js';
 
 const SKILL_CATALOG_MAX_CHARS = 8_000;
 const SKILL_CATALOG_NOTICE_RESERVE = 160;
-/** Share of the catalog that learned Skills may claim before formal ones. */
-const SKILL_CATALOG_LEARNED_RESERVE = 1_600;
 
 function catalogText(value: string, limit: number): string {
   const normalized = value.replace(/\s+/gu, ' ').trim();
@@ -55,7 +53,7 @@ export const SKILL_CATALOG_INSTRUCTIONS = [
     '',
   ].join('\n');
 
-interface CatalogLine { readonly line: string; readonly shortened: boolean; readonly learned: boolean }
+interface CatalogLine { readonly line: string; readonly shortened: boolean }
 
 function catalogLine(skill: SkillMetadata): CatalogLine {
   const description = catalogText(skill.description, 500);
@@ -63,34 +61,19 @@ function catalogLine(skill: SkillMetadata): CatalogLine {
   return {
     line: `- ${skill.name}:${hint ? ` ${hint}` : ''} ${description}`,
     shortened: description !== skill.description || hint !== (skill.argumentHint ?? ''),
-    learned: skill.source === 'learned',
   };
 }
 
-/**
- * Learned Skills come last in discovery order, so a full catalog would drop them
- * first; they get the first claim on a reserved share of the budget. Output keeps
- * discovery order.
- */
+/** Keeps discovery order and skips lines that no longer fit the budget. */
 function selectCatalogLines(entries: readonly CatalogLine[], start: number): CatalogLine[] {
-  const chosen = new Set<CatalogLine>();
   let used = start;
-  let learnedUsed = 0;
   const cap = SKILL_CATALOG_MAX_CHARS - SKILL_CATALOG_NOTICE_RESERVE;
-  for (const entry of entries.filter((item) => item.learned)) {
+  return entries.filter((entry) => {
     const cost = entry.line.length + 1;
-    if (learnedUsed + cost > SKILL_CATALOG_LEARNED_RESERVE || used + cost > cap) continue;
-    chosen.add(entry);
+    if (used + cost > cap) return false;
     used += cost;
-    learnedUsed += cost;
-  }
-  for (const entry of entries) {
-    const cost = entry.line.length + 1;
-    if (chosen.has(entry) || used + cost > cap) continue;
-    chosen.add(entry);
-    used += cost;
-  }
-  return entries.filter((entry) => chosen.has(entry));
+    return true;
+  });
 }
 
 /** Format the model-visible Skill catalog from an arbitrary trusted registry. */

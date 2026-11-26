@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { KodaXSessionArtifactLedgerEntry } from '@kodax-ai/agent';
 
-import {
-  collectVerifiedCheckFacts,
-  resolveLearnedSkillCanaryOutcome,
-} from './verified-checks.js';
+import { collectVerifiedCheckFacts } from './verified-checks.js';
 
 function entry(
   kind: KodaXSessionArtifactLedgerEntry['kind'],
@@ -85,25 +82,5 @@ describe('FEATURE_263 verified terminal check facts', () => {
       source: 'tool',
       observedAt: '2026-07-27T00:00:00.000Z',
     }]);
-  });
-
-  it('promotes only a successful run with passing facts and no failing fact', () => {
-    const passed = [{
-      ref: 'artifact:passed',
-      verdict: 'passed' as const,
-      source: 'tool' as const,
-      observedAt: '2026-07-27T00:00:00.000Z',
-    }];
-    const failed = [{
-      ref: 'artifact:failed',
-      verdict: 'failed' as const,
-      source: 'tool' as const,
-      observedAt: '2026-07-27T00:00:01.000Z',
-    }];
-
-    expect(resolveLearnedSkillCanaryOutcome(true, passed)).toBe('verified_success');
-    expect(resolveLearnedSkillCanaryOutcome(false, passed)).toBe('inconclusive');
-    expect(resolveLearnedSkillCanaryOutcome(true, [...passed, ...failed])).toBe('inconclusive');
-    expect(resolveLearnedSkillCanaryOutcome(true, [])).toBe('inconclusive');
   });
 });

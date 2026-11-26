@@ -167,7 +167,6 @@ export function buildToolExecutionContext(
     skillDynamicContext: options.skillDynamicContext,
     skillRegistry: options.context?.skillRegistry,
     activateModelSkill: options.context?.activateModelSkill,
-    admitLearnedSkillInvocation: options.context?.admitLearnedSkillInvocation,
     skillScriptRunner: options.context?.skillScriptRunner,
     isPagedContentRecoveryAllowed: options.context?.isPagedContentRecoveryAllowed,
     toolResultRecovery: options.context?.toolResultRecovery,

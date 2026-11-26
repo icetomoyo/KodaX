@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { resolveProtectedFormalSkillNames } from './learned-skill-runtime.js';
 import path from 'node:path';
 
 import {
@@ -15,12 +14,14 @@ import {
   getSessionLineagePath,
   getAgentConfigPath,
   exactInvokedSkillSnapshotForSession,
+  getDefaultSkillPaths,
   isUnifiedLearningReviewModelInput,
   LearnedAreaStore,
   normalizeUnifiedLearningReview,
   quarantineLearnedSkillRevision,
   resolveProjectLearnedAreaRoot,
   sanitizeUnifiedLearningReviewInput,
+  SkillRegistry,
   slugifyLearnedCapabilityName,
   tryGitRemote,
   type MemoryContextIdentity,
@@ -879,6 +880,24 @@ async function applyUnifiedSkillDecision(
     return [record.capabilityId];
   }
   return [];
+}
+
+/** Formal Skill names a learned Skill may not shadow, discovered only when a review commits one. */
+async function resolveProtectedFormalSkillNames(options: KodaXOptions): Promise<readonly string[]> {
+  const names = options.context?.skillRegistry?.list().map((skill) => skill.name) ?? [];
+  const configHome = options.context?.memoryIdentity?.configHome ?? options.context?.configHome;
+  if (configHome === undefined) return names;
+  const projectRoot = options.context?.gitRoot ?? resolveExecutionCwd(options.context);
+  const defaults = getDefaultSkillPaths(projectRoot);
+  const registry = new SkillRegistry(projectRoot, {
+    ...defaults,
+    userPaths: [
+      path.join(configHome, 'skills'),
+      ...defaults.userPaths.filter((skillPath) => path.basename(path.dirname(skillPath)) === '.agents'),
+    ],
+  });
+  await registry.discover();
+  return [...new Set([...names, ...registry.list().map((skill) => skill.name)])];
 }
 
 function isPersistedMemoryReviewPlan(value: unknown): value is MemoryReviewPlan {

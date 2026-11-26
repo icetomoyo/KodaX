@@ -187,7 +187,6 @@ import {
   persistMemoryOutcomeToSession,
   runOwnedMemoryWork,
 } from '../memory-runtime.js';
-import { prepareCodingLearnedSkillBinding } from '../learned-skill-runtime.js';
 import { usesHostMemory } from '../host-memory.js';
 import { bindModelSkillSelection } from '../skill-invocation-policy.js';
 import {
@@ -199,10 +198,7 @@ import {
   buildCodingMemoryContext,
   type CodingMemoryContext,
 } from '../memory/coding-context.js';
-import {
-  collectVerifiedCheckFacts,
-  resolveLearnedSkillCanaryOutcome,
-} from '../memory/verified-checks.js';
+import { collectVerifiedCheckFacts } from '../memory/verified-checks.js';
 import { recordMemoryDecisionReceipt } from '../memory/decision-trace.js';
 import {
   MEMORY_EVIDENCE_TOKEN_RESERVE,
@@ -776,14 +772,12 @@ async function runSubstrateInContext(
   events = withCompletionEventOnce(events);
   const memoryIdentity = options.context?.memoryIdentity
     ?? deriveCodingMemoryIdentity(options, resolveExecutionCwd(options.context), sessionId);
-  let learnedSkillBinding: Awaited<ReturnType<typeof prepareCodingLearnedSkillBinding>>;
   let memoryController: MemoryManagementController | undefined;
   let memoryPack: MemoryPack | undefined;
   let memoryBranchEpoch: number | undefined;
   let memoryReviewDrain: Promise<void> = Promise.resolve();
   let preferredMemoryReviewJobId: string | undefined;
   await runOwnedMemoryWork(options, async () => {
-    learnedSkillBinding = await prepareCodingLearnedSkillBinding(options, memoryIdentity, sessionId);
     try {
       if (usesHostMemory(options) && !isNoteMemoryEnabled()) {
         memoryController = createMemoryControlPlane({
@@ -819,16 +813,13 @@ async function runSubstrateInContext(
       emitResilienceDebug('[memory:session-start:error]', {
         error: error instanceof Error ? error.message : String(error),
       });
-    } finally {
-      if (options.abortSignal?.aborted) await learnedSkillBinding?.release();
     }
   });
   if (options.abortSignal?.aborted) {
     // CAP-005-001b / CAP-086-003: a caller signal already aborted at entry
     // settles as an interrupt terminal here — before any transcript, Git, or
     // provider work — instead of escaping runKodaX as a raw rejection. The
-    // memory setup above released its learned-skill binding in `finally`;
-    // the classic memory session and its review drain only exist after this
+    // classic memory session and its review drain only exist after this
     // point, so no owned background work is skipped.
     await applyAbortErrorTerminal({ events, emitActiveExtensionEvent });
     emitComplete(events);
@@ -847,7 +838,6 @@ async function runSubstrateInContext(
     context: {
       ...options.context,
       memoryIdentity,
-      ...learnedSkillBinding?.context,
       ...(memoryPack !== undefined ? { memoryPack } : {}),
     },
   };
@@ -1135,29 +1125,6 @@ async function runSubstrateInContext(
       if (memorySession !== undefined) {
         await completeClassicMemorySession(memorySession, finalized, sessionId, handledMemoryOperations);
       }
-      if (options.context?.completeLearnedSkillOutcomes !== undefined) {
-        const checks = collectVerifiedCheckFacts(finalized.artifactLedger ?? []);
-        try {
-          await options.context.completeLearnedSkillOutcomes({
-            sessionId,
-            outcome: resolveLearnedSkillCanaryOutcome(finalized.success, checks),
-            evidenceRefs: checks.length > 0
-              ? checks.map((check) => check.ref)
-              : [`host:run-terminal:${sessionId}`],
-          });
-        } catch (error) {
-          emitResilienceDebug('[learning:skill-outcome:error]', {
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
-      try {
-        await learnedSkillBinding?.release();
-      } catch (error) {
-        emitResilienceDebug('[learning:skill-binding-release:error]', {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
     });
     if (noteEarlierCalls !== undefined && noteMemoryAppliesTo(options)) {
       try {
@@ -1397,7 +1364,7 @@ async function runSubstrateInContext(
     }).startSession({
       identity: memoryIdentity,
       objective: prompt,
-      episodeId: options.context?.learnedSkillBindingId ?? liveTurnScopeRef.current.turnId,
+      episodeId: liveTurnScopeRef.current.turnId,
     }));
     if (memoryRecallToolAllowed && memorySession !== undefined) {
       runtimeSessionState.activeTools = activateMemoryRecallTool(

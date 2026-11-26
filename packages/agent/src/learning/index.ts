@@ -172,12 +172,9 @@ export type {
 
 export {
   createLearnedSkillActionDriver,
+  importApprovedLearnedSkills,
   type CreateLearnedSkillActionDriverOptions,
 } from './learned-skill-driver.js';
-export {
-  migrateLegacyLearnedSkillsForProject,
-  type LegacyLearnedSkillMigrationResult,
-} from './legacy-learned-skill-migration.js';
 export type {
   ExactInvokedSkillSnapshot,
   LearnedSkillInvokedReceipt,

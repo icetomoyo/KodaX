@@ -132,8 +132,6 @@
     "packages/coding/src/task-engine/_internal/managed-task/role-prompt-capabilities.test.ts",
     "packages/coding/src/agent-runtime/prompt-cache-diagnostics.test.ts",
     "packages/coding/src/agent-runtime/tool-invocation.test.ts",
-    "packages/coding/src/agent.learned-skills.test.ts",
-    "packages/coding/src/learned-skill-runtime.test.ts",
     "packages/coding/src/provider-policy.test.ts",
     "packages/coding/src/self-knowledge/registry.test.ts",
     "packages/coding/src/skill-invocation-policy.test.ts",

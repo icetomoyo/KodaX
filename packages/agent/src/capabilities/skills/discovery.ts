@@ -5,17 +5,9 @@
  * Supports nested directory discovery for monorepos.
  */
 
-import { createHash } from 'node:crypto';
-import { lstat, readFile, readdir, realpath, stat } from 'fs/promises';
-import { join, dirname, relative, resolve, sep } from 'path';
-import {
-  LearnedAreaStore,
-  isLearnedCapabilityRecordV2,
-  type LearnedCapabilityRecordV2,
-} from '../../learning/index.js';
+import { readdir, realpath, stat } from 'fs/promises';
+import { join, dirname, resolve } from 'path';
 import type {
-  LearnedSkillDiscoveryConfig,
-  LearnedSkillDiscoveryScope,
   ResolvedSkillSource,
   SkillMetadata,
   SkillPathsConfig,
@@ -92,205 +84,13 @@ export async function discoverSkills(
       });
     }
   }
-  if (config.learnedArea !== undefined) {
-    const learned = await scanRecordGatedLearnedArea(config.learnedArea);
-    errors.push(...learned.errors);
-    for (const skill of learned.skills) {
-      register(skill);
-    }
-  }
 
   return { skills, errors, sourceStamps };
-}
-
-async function scanRecordGatedLearnedArea(
-  config: LearnedSkillDiscoveryConfig,
-): Promise<{
-  readonly skills: readonly SkillMetadata[];
-  readonly errors: readonly { path: string; error: string }[];
-}> {
-  const skills: SkillMetadata[] = [];
-  const errors: Array<{ path: string; error: string }> = [];
-  for (const binding of learnedAreaBindings(config)) {
-    const discovered = await scanRecordGatedLearnedRoot(
-      binding.rootDir,
-      binding.expectedScope,
-      config,
-    );
-    skills.push(...discovered.skills);
-    errors.push(...discovered.errors);
-  }
-  return { skills, errors };
-}
-
-async function scanRecordGatedLearnedRoot(
-  rootDir: string,
-  expectedScope: LearnedSkillDiscoveryScope,
-  config: LearnedSkillDiscoveryConfig,
-): Promise<{
-  readonly skills: readonly SkillMetadata[];
-  readonly errors: readonly { path: string; error: string }[];
-}> {
-  const store = new LearnedAreaStore(rootDir);
-  const skills: SkillMetadata[] = [];
-  const errors: Array<{ path: string; error: string }> = [];
-  let records: readonly import('../../learning/index.js').LearnedCapabilityRecord[];
-  try {
-    records = await store.listCapabilities();
-  } catch (error) {
-    return {
-      skills,
-      errors: [{
-        path: rootDir,
-        error: error instanceof Error ? error.message : String(error),
-      }],
-    };
-  }
-  for (const record of records) {
-    if (!isLearnedCapabilityRecordV2(record) || !scopeMatches(record, expectedScope)) continue;
-    if (!isRecordAdmitted(record, config)) continue;
-    const artifactPath = resolve(rootDir, ...record.artifact.relativePath.split('/'));
-    try {
-      assertInside(artifactPath, rootDir);
-      await assertRegularArtifactChain(rootDir, artifactPath);
-      const content = await readFile(artifactPath, 'utf8');
-      if (sha256(content) !== record.artifact.fingerprint) {
-        throw new Error('learned Skill artifact fingerprint mismatch');
-      }
-      const metadata = await loadSkillMetadata(dirname(artifactPath), 'learned');
-      if (metadata === null) throw new Error('learned Skill metadata is invalid');
-      skills.push({
-        ...metadata,
-        learned: {
-          capabilityId: record.capabilityId,
-          revision: record.artifact.contentRevision,
-          fingerprint: record.artifact.fingerprint,
-        },
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      errors.push({ path: artifactPath, error: message });
-      await quarantineInvalidLearnedArtifact(store, record, message);
-    }
-  }
-  return { skills, errors };
-}
-
-function learnedAreaBindings(config: LearnedSkillDiscoveryConfig): readonly {
-  readonly rootDir: string;
-  readonly expectedScope: LearnedSkillDiscoveryScope;
-}[] {
-  const roots = [config.rootDir, ...(config.additionalRootDirs ?? [])];
-  const scopes = expectedLearnedScopes(config);
-  if (roots.length !== scopes.length) {
-    throw new Error('learned Skill discovery requires one expected scope per physical root');
-  }
-  const bindings = roots.map((rootDir, index) => ({
-    rootDir,
-    expectedScope: scopes[index]!,
-  }));
-  for (const [index, binding] of bindings.entries()) {
-    const duplicate = bindings.findIndex((candidate) => (
-      comparablePath(candidate.rootDir) === comparablePath(binding.rootDir)
-    ));
-    if (duplicate !== index) {
-      throw new Error('learned Skill discovery physical roots must be unique');
-    }
-  }
-  return bindings;
-}
-
-function scopeMatches(
-  record: LearnedCapabilityRecordV2,
-  expectedScope: LearnedSkillDiscoveryScope,
-): boolean {
-  return record.scope.configHomeHash === expectedScope.configHomeHash
-    && record.scope.tenantHash === expectedScope.tenantHash
-    && record.scope.projectHash === expectedScope.projectHash;
-}
-
-function expectedLearnedScopes(
-  config: LearnedSkillDiscoveryConfig,
-): readonly LearnedSkillDiscoveryScope[] {
-  const expectedScopes = [
-    ...(config.expectedScopes ?? [config.expectedScope]),
-  ];
-  if (expectedScopes.length === 0) {
-    throw new Error('learned Skill discovery requires at least one expected scope');
-  }
-  return expectedScopes;
-}
-
-function isRecordAdmitted(
-  record: LearnedCapabilityRecordV2,
-  config: LearnedSkillDiscoveryConfig,
-): boolean {
-  if (record.lifecycle === 'active_learned') return true;
-  if (record.lifecycle !== 'testing') return false;
-  const bindingId = config.testingBindings?.[record.capabilityId];
-  const binding = record.canary.binding;
-  return bindingId !== undefined
-    && binding?.bindingId === bindingId
-    && Date.parse(binding.expiresAt) > Date.parse(config.now ?? new Date().toISOString());
-}
-
-async function quarantineInvalidLearnedArtifact(
-  store: LearnedAreaStore,
-  observed: LearnedCapabilityRecordV2,
-  reason: string,
-): Promise<void> {
-  await store.withOwnerMutation(async () => {
-    const current = await store.readCapability(observed.capabilityId);
-    if (current === undefined
-      || !isLearnedCapabilityRecordV2(current)
-      || current.revision !== observed.revision
-      || (current.lifecycle !== 'testing' && current.lifecycle !== 'active_learned')) return;
-    const next: LearnedCapabilityRecordV2 = {
-      ...current,
-      lifecycle: 'quarantined',
-      revision: current.revision + 1,
-      updatedAt: new Date().toISOString(),
-      diagnostics: [...(current.diagnostics ?? []), `artifact discovery rejected: ${reason}`],
-    };
-    await store.writeCapability(next);
-    await store.ensureCurrentEvent(next);
-  });
-}
-
-async function assertRegularArtifactChain(rootDir: string, artifactPath: string): Promise<void> {
-  const relativePath = relative(resolve(rootDir), artifactPath);
-  const parts = relativePath.split(sep);
-  let current = resolve(rootDir);
-  const rootInfo = await lstat(current);
-  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
-    throw new Error('learned Skill root is not a regular directory');
-  }
-  for (const [index, part] of parts.entries()) {
-    current = join(current, part);
-    const info = await lstat(current);
-    const final = index === parts.length - 1;
-    if (info.isSymbolicLink()
-      || (final ? !info.isFile() : !info.isDirectory())) {
-      throw new Error('learned Skill artifact contains a symlink or non-regular path');
-    }
-  }
-}
-
-function assertInside(target: string, rootDir: string): void {
-  const root = comparablePath(rootDir);
-  const candidate = comparablePath(target);
-  if (candidate !== root && !candidate.startsWith(root.endsWith(sep) ? root : `${root}${sep}`)) {
-    throw new Error('learned Skill artifact escapes its Learned Area');
-  }
 }
 
 function comparablePath(value: string): string {
   const normalized = resolve(value);
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
-}
-
-function sha256(value: string): string {
-  return createHash('sha256').update(value, 'utf8').digest('hex');
 }
 
 /**

@@ -246,7 +246,7 @@ export interface StoredSkillLearningApplyPlan {
 
 export type StoredLearningApplyPlan = StoredSkillLearningApplyPlan;
 
-export type GovernedSkillSource = ResolvedSkillSource | 'external';
+export type GovernedSkillSource = ResolvedSkillSource | 'learned' | 'external';
 
 export type SkillOwnership =
   | 'system'

@@ -70,11 +70,6 @@ export interface SkillMetadata {
   argumentHint?: string;
   path: string;
   source: ResolvedSkillSource;
-  readonly learned?: {
-    readonly capabilityId: string;
-    readonly revision: number;
-    readonly fingerprint: string;
-  };
   /** If true, exclude from system prompt; still invokable by explicit slash forms. */
   disableModelInvocation: boolean;
 }
@@ -132,8 +127,8 @@ export type SkillSource =
   | 'plugin' // Plugin-provided skills
   | 'builtin'; // Built-in skills
 
-/** Runtime discovery output; learned Skills remain lower precedence than formal sources. */
-export type ResolvedSkillSource = SkillSource | 'learned';
+/** Where a discovered Skill came from. */
+export type ResolvedSkillSource = SkillSource;
 
 // === Skill Registry ===
 
@@ -284,44 +279,6 @@ export interface SkillPathsConfig {
   userPaths: string[];
   pluginPaths: string[];
   builtinPath: string;
-  /**
-   * Deprecated loose-file path. It remains in the public shape for source
-   * compatibility but is intentionally not discovered without a manifest.
-   */
-  learnedPath?: string;
-  learnedArea?: LearnedSkillDiscoveryConfig;
-}
-
-export interface LearnedSkillDiscoveryScope {
-  readonly configHomeHash: string;
-  readonly tenantHash: string;
-  readonly projectHash: string;
-}
-
-interface LearnedSkillDiscoveryConfigBase {
-  readonly rootDir: string;
-  /** Additional identity-specific Learned Areas, in fallback precedence order. */
-  readonly additionalRootDirs?: readonly string[];
-  readonly testingBindings?: Readonly<Record<string, string>>;
-  readonly now?: string;
-}
-
-export interface LearnedSkillDiscoveryConfig extends LearnedSkillDiscoveryConfigBase {
-  /**
-   * Primary identity scope. Kept required so existing consumers can both
-   * construct and read the original public configuration shape unchanged.
-   */
-  readonly expectedScope: LearnedSkillDiscoveryScope;
-  /**
-   * One or more identity scopes paired with rootDir/additionalRootDirs.
-   * Multi-scope support resolves the non-deterministic divergence between
-   * `remote:*` (git remote available) and `local:*` (git remote unavailable)
-   * project identities within the same repository.
-   */
-  readonly expectedScopes?: readonly [
-    LearnedSkillDiscoveryScope,
-    ...LearnedSkillDiscoveryScope[],
-  ];
 }
 
 // === Default Skill Paths ===
@@ -379,8 +336,6 @@ export function physicalSkillRoot(candidate: string): string {
  * 3. User - ~/.agents/skills/ (AgentSkills standard, shared across tools)
  * 4. Plugin - (dynamic)
  * 5. Builtin - packages/skills/src/builtin/
- * Learned Skills are supplied separately through a record-gated Learned Area
- * and never through a loose directory.
  */
 export function getDefaultSkillPaths(projectRoot?: string): SkillPathsConfig {
   return {
@@ -410,13 +365,11 @@ export function getDefaultSkillPaths(projectRoot?: string): SkillPathsConfig {
 /**
  * All skill paths in priority order (highest to lowest)
  *
- * Priority: Project > User > Plugin > Builtin. Record-gated Learned Skills
- * are appended by discovery after these formal sources.
+ * Priority: Project > User > Plugin > Builtin.
  * - Project: Project-specific skills override everything else
  * - User: User preferences (<agent home>/skills/ and ~/.agents/skills/)
  * - Plugin: Third-party plugins
  * - Builtin: Default skills shipped with KodaX
- * - Learned: Runtime-governed Skills, always lower precedence than formal sources
  */
 export function getSkillPathsFlat(config: SkillPathsConfig): Array<{ path: string; source: ResolvedSkillSource }> {
   const result: Array<{ path: string; source: ResolvedSkillSource }> = [];

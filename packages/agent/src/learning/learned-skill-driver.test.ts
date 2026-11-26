@@ -15,7 +15,8 @@ import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createLearningCenterService } from './learning-center-service.js';
-import { createLearnedSkillActionDriver } from './learned-skill-driver.js';
+import { setKodaXDiagnosticSink, type KodaXDiagnostic } from '../diagnostics.js';
+import { createLearnedSkillActionDriver, importApprovedLearnedSkills } from './learned-skill-driver.js';
 import {
   admitLearnedSkillBinding,
   commitLearnedSkillRevision,
@@ -500,5 +501,67 @@ describe('FEATURE_263 learned Skill action driver', () => {
       .toMatchObject({ lifecycle: 'archived' });
     expect(await first.projectStore.readCapability(first.record.capabilityId))
       .toMatchObject({ lifecycle: 'ready' });
+  });
+});
+
+describe('importApprovedLearnedSkills', () => {
+  async function projectRecord(
+    configHome: string,
+    projectId: string,
+    step: string,
+    approve: boolean,
+  ) {
+    const projectRoot = resolveProjectLearnedAreaRoot(configHome, { tenantId: 'tenant-a', projectId });
+    const store = new LearnedAreaStore(projectRoot);
+    await store.initialize();
+    const record = await commitLearnedSkillRevision(store, {
+      scope: createLearnedCapabilityScope(configHome, { tenantId: 'tenant-a', projectId }),
+      spec: approve ? spec(step) : { ...spec(step), name: `draft-${projectId}` },
+      disposition: 'ready',
+      operation: 'create',
+      provenance: {
+        jobId: `job-${projectId}`,
+        inputHash: 'c'.repeat(64),
+        decisionId: `decision-${projectId}`,
+        actionId: `action-${projectId}`,
+      },
+    });
+    if (approve) {
+      await createLearningCenterService({
+        rootDir: projectRoot,
+        clientIdentity: 'user-a',
+        actionDrivers: [createLearnedSkillActionDriver({
+          learnedAreaRoot: projectRoot,
+          learnedAreaKind: 'project',
+          userSkillsRoot: join(configHome, 'unused-skills'),
+        })],
+      }).trust(record.capabilityId);
+    }
+    return { store, record };
+  }
+
+  it('copies approved Skills once, never overwrites a user Skill and leaves learned records alone', async () => {
+    const configHome = await mkdtemp(join(tmpdir(), 'kodax-learned-import-'));
+    roots.push(configHome);
+    const first = await projectRecord(configHome, 'project-a', 'Run the release test suite.', true);
+    await projectRecord(configHome, 'project-b', 'Run only the smoke tests.', true);
+    await projectRecord(configHome, 'project-c', 'Not approved yet.', false);
+    const diagnostics: KodaXDiagnostic[] = [];
+    const restore = setKodaXDiagnosticSink((diagnostic) => diagnostics.push(diagnostic));
+    try {
+      await importApprovedLearnedSkills(configHome);
+      const skillsRoot = join(configHome, 'skills');
+      const copied = await readFile(join(skillsRoot, 'verify-release', 'SKILL.md'), 'utf8');
+      expect(copied.includes('Run the release test suite.') !== copied.includes('Run only the smoke tests.')).toBe(true);
+      expect((await readdir(skillsRoot)).sort()).toEqual(['.learned-skills-imported.json', 'verify-release']);
+      expect(diagnostics.filter((item) => item.level === 'warn')).toHaveLength(1);
+      expect(await first.store.readCapability(first.record.capabilityId)).toMatchObject({ lifecycle: 'active_learned' });
+
+      await rm(join(skillsRoot, 'verify-release'), { recursive: true, force: true });
+      await importApprovedLearnedSkills(configHome);
+      await expect(access(join(skillsRoot, 'verify-release'))).rejects.toThrow();
+    } finally {
+      restore();
+    }
   });
 });

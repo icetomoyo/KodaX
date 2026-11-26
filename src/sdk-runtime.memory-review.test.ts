@@ -5,7 +5,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { inspectEpisodeReviewJob, listPendingEpisodeReviews, resolveMemoryRoot,
-  LearnedAreaStore, commitLearnedSkillRevision, createLearnedCapabilityScope, resolveProjectLearnedAreaRoot,
   type UnifiedLearningReviewRunner } from '@kodax-ai/agent';
 import { deriveCodingMemoryIdentity } from '@kodax-ai/coding';
 import { KodaXBaseProvider, registerModelProvider,
@@ -173,7 +172,7 @@ it.each(['coding', 'managed_task'] as const)('cancels owned %s terminal review a
   }
 });
 
-function holdMemoryWrite(root: string, phase: 'setup' | 'finalize' | 'maintenance' | 'skill-release') {
+function holdMemoryWrite(root: string, phase: 'setup' | 'finalize' | 'maintenance') {
   const entered = deferred<void>();
   const release = deferred<void>();
   const original = fs.writeFile;
@@ -182,8 +181,7 @@ function holdMemoryWrite(root: string, phase: 'setup' | 'finalize' | 'maintenanc
   vi.spyOn(fs, 'writeFile').mockImplementation(async (...args) => {
     const file = path.resolve(String(args[0]));
     const target = file.startsWith(path.join(root, '.kodax') + path.sep)
-      && (phase === 'skill-release' ? String(args[1]).includes('"canary":') && !String(args[1]).includes('"binding":')
-        : phase === 'maintenance' ? file.includes(`${path.sep}.governance${path.sep}reports${path.sep}`)
+      && (phase === 'maintenance' ? file.includes(`${path.sep}.governance${path.sep}reports${path.sep}`)
         : phase === 'setup' ? path.basename(file).startsWith('branch-authority.json.')
           : file.includes(`${path.sep}pending${path.sep}`));
     const held = target && !started;
@@ -232,55 +230,6 @@ it.each([
   } finally {
     memoryWrite.release(); review.finishCleanup();
     await f.close();
-  }
-});
-
-async function seedLearnedCanary(f: Awaited<ReturnType<typeof fixture>>) {
-  const configHome = path.join(f.root, '.kodax');
-  const scope = { tenantId: f.identity.tenantId, projectId: f.identity.projectId! };
-  const store = new LearnedAreaStore(resolveProjectLearnedAreaRoot(configHome, scope));
-  await store.initialize();
-  const record = await commitLearnedSkillRevision(store, {
-    scope: createLearnedCapabilityScope(configHome, scope), operation: 'create', disposition: 'project_canary',
-    spec: { name: 'verify-release', description: 'Use to validate this project before release.',
-      purpose: 'Verify release evidence.', triggers: ['A release needs verification.'],
-      steps: ['Run the release test suite.'], verification: ['Require a passing artifact.'],
-      pitfalls: ['Do not trust self-reports.'] },
-    provenance: { jobId: 'memory-exit-fixture', inputHash: 'c'.repeat(64),
-      decisionId: 'memory-exit-decision', actionId: 'memory-exit-action' },
-  });
-  return { store, record };
-}
-
-it('settles a real learned canary release write before classic Runtime close returns', async () => {
-  const f = await fixture();
-  const review = reviewerGate();
-  review.release();
-  let write: ReturnType<typeof holdMemoryWrite> | undefined;
-  let verified = false;
-  try {
-    const { store, record } = await seedLearnedCanary(f);
-    write = holdMemoryWrite(f.root, 'skill-release');
-    const run = await f.start(review.reviewer, 'coding');
-    await awaitEvent(write.entered, 'learned canary release write');
-    const bound = await store.readCapability(record.capabilityId);
-    if (bound?.schemaVersion !== 2) throw new Error('Expected a scoped canary before release');
-    expect(bound.canary).toHaveProperty('binding');
-    const closing = f.runtime.close();
-    // The actual file write stays gated; give unrelated close IO time to settle.
-    const closedBeforeRelease = await Promise.race([closing.then(() => true),
-      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 50))]);
-    expect(closedBeforeRelease).toBe(false);
-    write.release();
-    await awaitEvent(closing, 'learned canary release close');
-    await run.result;
-    const released = await store.readCapability(record.capabilityId);
-    if (released?.schemaVersion !== 2) throw new Error('Expected a scoped canary after release');
-    expect(released.canary).not.toHaveProperty('binding');
-    verified = true;
-  } finally {
-    write?.release(); review.finishCleanup();
-    await f.close(verified);
   }
 });
 

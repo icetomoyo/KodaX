@@ -9,17 +9,6 @@ export interface VerifiedCheckFact {
   readonly observedAt: string;
 }
 
-export function resolveLearnedSkillCanaryOutcome(
-  runSucceeded: boolean,
-  facts: readonly VerifiedCheckFact[],
-): 'verified_success' | 'inconclusive' {
-  return runSucceeded
-    && facts.some((fact) => fact.verdict === 'passed')
-    && facts.every((fact) => fact.verdict === 'passed')
-    ? 'verified_success'
-    : 'inconclusive';
-}
-
 /**
  * Reads only terminal facts whose producer explicitly asserted both its
  * authority and verdict. A bare `check_result`, a model statement, or a

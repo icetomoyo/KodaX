@@ -87,21 +87,6 @@ export async function toolSkill(
     if (!ctx.activateModelSkill && (fullSkill.hooks || fullSkill.model || fullSkill.agent)) {
       return `[Tool Error] skill ${skillName}: runtime Skill activation is unavailable.`;
     }
-    const metadata = registry.get(skillName);
-    if (metadata?.source === 'learned') {
-      if (metadata.learned === undefined
-        || ctx.admitLearnedSkillInvocation === undefined
-        || ctx.sessionId === undefined) {
-        return `[Tool Error] skill ${skillName}: learned Skill invocation is not admitted by the Runtime owner`;
-      }
-      await ctx.admitLearnedSkillInvocation({
-        sessionId: ctx.sessionId,
-        capabilityId: metadata.learned.capabilityId,
-        revision: metadata.learned.revision,
-        fingerprint: metadata.learned.fingerprint,
-      });
-    }
-
     const activation = await ctx.activateModelSkill?.(fullSkill, args, registry);
     const expanded = await expandSkillForLLM(fullSkill, args, {
       workingDirectory: cwd,
