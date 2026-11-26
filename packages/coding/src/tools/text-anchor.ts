@@ -139,6 +139,16 @@ export function findUniqueUnicodeNormalizedBlockMatch(
   return { status: 'missing' };
 }
 
+/**
+ * Where a replacement of a normalized block match must stop. The match covers whole lines, terminator included; a
+ * needle that does not end with a line break replaces only the text, or the next line would join the replacement.
+ */
+export function normalizedReplacementEnd(content: string, end: number, needle: string): number {
+  if (/[\r\n]$/.test(needle)) return end;
+  if (content.startsWith('\r\n', end - 2)) return end - 2;
+  return /[\r\n]/.test(content[end - 1] ?? '') ? end - 1 : end;
+}
+
 export function findUniqueNormalizedBlockMatch(
   content: string,
   needle: string,

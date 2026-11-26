@@ -130,10 +130,21 @@ describe('multi_edit — success paths', () => {
     );
 
     expect(result).toContain('File edited');
-    const after = await fs.readFile(p, 'utf-8');
-    expect(after).toContain('ONE');
-    expect(after).toContain('TWO');
-    expect(after).toContain('gamma');
+    expect(await fs.readFile(p, 'utf-8')).toBe('ONE\r\nTWO\r\ngamma');
+  });
+
+  it('keeps line breaks across several normalized edits in one batch', async () => {
+    const p = await writeFile('batch-eol.ts', ['/**', ' * a', ' */', 'x;', '/**', ' * b', ' */', 'y;', ''].join('\r\n'));
+
+    await toolMultiEdit({
+      path: p,
+      edits: [
+        { old_string: ' * a\n */', new_string: ' * A\n */' },
+        { old_string: ' * b\n */\ny;', new_string: ' * B\n */\nz;' },
+      ],
+    }, ctx);
+
+    expect(await fs.readFile(p, 'utf-8')).toBe(['/**', ' * A', ' */', 'x;', '/**', ' * B', ' */', 'z;', ''].join('\r\n'));
   });
 });
 

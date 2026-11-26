@@ -7,6 +7,7 @@ import {
   detectPreferredLineEnding,
   findUniqueNormalizedBlockMatch,
   findUniqueUnicodeNormalizedBlockMatch,
+  normalizedReplacementEnd,
   readResolvedTextFile,
 } from './text-anchor.js';
 import { executeEditBatch, findExactMatchPositions, formatLineList } from './multi-edit.js';
@@ -184,7 +185,7 @@ async function runEditOnce(
       detectPreferredLineEnding(content),
     );
     replacementPlan = {
-      newContent: `${content.slice(0, matchedRange.start)}${normalizedReplacement}${content.slice(matchedRange.end)}`,
+      newContent: `${content.slice(0, matchedRange.start)}${normalizedReplacement}${content.slice(normalizedReplacementEnd(content, matchedRange.end, oldStr))}`,
       diffPreviewMode: 'diff',
       replacementCount: 1,
     };

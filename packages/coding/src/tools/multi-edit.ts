@@ -24,6 +24,7 @@ import {
   detectPreferredLineEnding,
   findUniqueNormalizedBlockMatch,
   findUniqueUnicodeNormalizedBlockMatch,
+  normalizedReplacementEnd,
 } from './text-anchor.js';
 import { buildStaleWriteReason } from '../multi-instance/content-hash-cache.js';
 import { memoryMutationDenial } from './memory-mutation-guard.js';
@@ -255,7 +256,7 @@ export function applyOneEdit(
     content:
       content.slice(0, matchedRange.start)
       + replacement
-      + content.slice(matchedRange.end),
+      + content.slice(normalizedReplacementEnd(content, matchedRange.end, oldStr)),
     replacements: 1,
   };
 }

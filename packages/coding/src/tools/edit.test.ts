@@ -153,6 +153,21 @@ describe('edit tool', () => {
     );
   });
 
+  it('keeps the line break after a normalized match when old_string does not end with one', async () => {
+    const filePath = path.join(tempDir, 'types.ts');
+    await fs.writeFile(filePath, '  /**\r\n   * doc\r\n   */\r\n  readonly a: string;\r\n  /**\r\n   * next\r\n   */\r\n', 'utf8');
+
+    await toolEdit({
+      path: filePath,
+      old_string: '   * doc\n   */\n  readonly a: string;',
+      new_string: '   * doc2\n   */\n  readonly a: string;',
+    }, ctx);
+
+    await expect(fs.readFile(filePath, 'utf8')).resolves.toBe(
+      '  /**\r\n   * doc2\r\n   */\r\n  readonly a: string;\r\n  /**\r\n   * next\r\n   */\r\n',
+    );
+  });
+
   it('returns a stable not-found error code', async () => {
     const filePath = path.join(tempDir, 'doc.md');
     await fs.writeFile(filePath, 'alpha\nbeta\n', 'utf8');

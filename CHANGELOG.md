@@ -254,6 +254,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- A multi-line `edit` or `multi_edit` on a CRLF file no longer joins the next
+  line onto the end of the replacement (Issue 444). The same happened on LF
+  files when the anchor differed only in whitespace.
 - In a protocol v2 Session view, a running Run's earlier answers were
   `live` until the Run ended, so a long Run's text slid out of the window
   looking discarded. Only the answer the Run is writing is `live` now.

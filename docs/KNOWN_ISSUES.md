@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-11-23_
+_Last Updated: 2026-11-26_
 
 ---
 
@@ -46,6 +46,41 @@ This predates the child contract projection; the eval uses raw per-call usage,
 not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
+
+## Issue 444: A multi-line edit on a CRLF file joins the next line onto the replacement
+
+- Priority: High
+- Status: Resolved
+- Introduced: `v0.7.15` (`c26570911`, normalized block match for edit anchors)
+- Created / Resolved: 2026-11-26 / 2026-11-26
+- Fixed: unreleased (after `v0.7.97-rc.2`)
+- Reported by: RepoIntel v2 task A/B (design doc §11.10)
+
+### Original Problem
+
+Models write `old_string` with LF line breaks. On a CRLF file the exact match
+always misses, so `edit` and `multi_edit` fall back to the line-normalized
+match. That match covers whole lines including the last line's terminator,
+and the replacement wrote `new_string` over all of it. When `old_string` did
+not end with a line break, the next line joined the end of the replacement:
+`readonly maxPriority: MessagePriority;  /**`. LF files hit the same path when
+the anchor differs only in whitespace.
+
+Most KodaX files and most Windows repositories are CRLF. In the A/B every
+editing Run had 1 to 19 such edits; models usually spent extra turns repairing
+the joined lines, and one Run failed its type-check on a comment joined to
+`export type {`. The old `multi_edit` CRLF test checked only `toContain` and
+passed on the joined output.
+
+### Resolution
+
+- `normalizedReplacementEnd` in `text-anchor.ts`: a normalized replacement
+  keeps the matched block's last line break unless `old_string` ends with one.
+  `edit` and `multi_edit` (and `edit` with `edits`) use it. Exact matches and
+  `insert_after_anchor` are unchanged.
+- Tests: `edit.test.ts` (CRLF doc comment followed by another line),
+  `multi-edit.test.ts` (exact output for CRLF drift; two normalized edits in
+  one batch).
 
 ## Issue 443: Side chat gaps left after FEATURE_307
 
@@ -4789,6 +4824,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 444 | High | Resolved | A multi-line edit on a CRLF file joins the next line onto the replacement | `v0.7.15` | unreleased (after `v0.7.97-rc.2`) | 2026-11-26 | 2026-11-26 |
 | 443 | Low | Open | Side chat gaps left after FEATURE_307 | FEATURE_307 (unreleased, `KodaX-next-dev`) | — | 2026-11-24 | — |
 | 442 | Medium | Resolved | Gemini and pi-messages replay another model's tool calls as text | `v0.7.97-alpha.12` | unreleased (after `v0.7.97-rc.1`) | 2026-11-23 | 2026-11-23 |
 | 441 | High | Resolved | Replayed reasoning from another model becomes reply text, and models learn to write their thinking into the answer | `v0.7.97-alpha.12` | unreleased (after `v0.7.97-rc.1`) | 2026-11-23 | 2026-11-23 |
