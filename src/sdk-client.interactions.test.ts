@@ -416,7 +416,8 @@ it('returns multi-question answers with arrays, zero selections, and custom inpu
     if (interaction.kind !== 'question_multi') throw new Error(`Expected question_multi, got ${interaction.kind}`);
     expect(interaction.options.questions.map((item) => item.question)).toEqual(['Pick many', 'Pick one']);
 
-    const invalidAnswers: Record<string, AskUserAnswer>[] = [{}, { 'Pick many': [] }, { 'Pick many': [], 'Pick one': 'unknown' },
+    // A partial map is valid (questions left out are skipped), so only bad answers and unknown questions are refused.
+    const invalidAnswers: Record<string, AskUserAnswer>[] = [{ 'Pick many': [], 'Pick one': 'unknown' },
       { 'Pick many': [], 'Pick one': 'yes', Extra: 'yes' }];
     for (const answers of invalidAnswers) {
       await expect(first.interactions.respond(interaction.requestId, { kind: 'question_multi', answers }))
