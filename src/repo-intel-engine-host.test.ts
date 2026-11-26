@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import type { RepoIntelSupervisor } from '@kodax-ai/coding';
 import {
-  createRepoIntelEngineHost, inspectRepoIntelEngine, locateRepoIntelEngine, relayRunEventToRepoIntel,
+  createRepoIntelEngineHost, inspectRepoIntelEngine, locateRepoIntelEngine, relayRunEventToRepoIntel, repoIntelQueryFor,
 } from './repo-intel-engine-host.js';
 
 const program = `kodax-repo-intel${process.platform === 'win32' ? '.exe' : ''}`;
@@ -108,6 +108,7 @@ describe('relayRunEventToRepoIntel', () => {
   const engine = (): RepoIntelSupervisor & { open: Mock<RepoIntelSupervisor['open']>; changed: Mock<RepoIntelSupervisor['changed']> } => ({
     open: vi.fn<RepoIntelSupervisor['open']>(), changed: vi.fn<RepoIntelSupervisor['changed']>(),
     status: vi.fn<RepoIntelSupervisor['status']>(), close: vi.fn<RepoIntelSupervisor['close']>(),
+    query: <T>(): Promise<T> => Promise.reject(new Error('not asked here')),
   });
   const edited = (filePath: string): unknown => ({
     result: { id: 't1', name: 'edit', content: 'ok',
@@ -135,5 +136,17 @@ describe('relayRunEventToRepoIntel', () => {
     relayRunEventToRepoIntel(target, 'turn.started', {}, root);
     expect(target.changed).not.toHaveBeenCalled();
     expect(target.open.mock.calls).toEqual([[root], [root]]);
+  });
+});
+
+describe('repoIntelQueryFor', () => {
+  it("asks the engine about the Run's repository", async () => {
+    const root = path.resolve('/work/repo');
+    const query = vi.fn(async () => ({ hits: [] }));
+    const engine = { open: vi.fn(), changed: vi.fn(), status: vi.fn(), close: vi.fn(), query } as unknown as RepoIntelSupervisor;
+    const bound = repoIntelQueryFor(engine, root);
+    expect(bound.root).toBe(root);
+    await expect(bound.request('file.outline', { path: 'a.ts' })).resolves.toEqual({ hits: [] });
+    expect(query).toHaveBeenCalledWith(root, 'file.outline', { path: 'a.ts' });
   });
 });

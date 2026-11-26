@@ -120,7 +120,8 @@ import { assembleConversationHistoryEntry, readFollowingMessage } from './conver
 import { CLIENT_CONFIG_APPLICATION, toClientConfig, toClientSessionSettings } from "./client-settings.js";
 export type { ClientHistoryTurnSelector, ClientHistoryTurnResolution } from '@kodax-ai/coding/client-contract';
 import { createHostIntegrations } from "./host-integrations.js";
-import { createRepoIntelEngineHost, relayRunEventToRepoIntel } from "./repo-intel-engine-host.js";
+import { createRepoIntelEngineHost, relayRunEventToRepoIntel, repoIntelQueryFor } from "./repo-intel-engine-host.js";
+import type { RepoIntelSupervisor } from "@kodax-ai/coding";
 import { spawnSync } from "node:child_process";
 import { RUNTIME_AUTO_MODE_GUARDRAIL_CAPABILITY } from './runtime-capability-facts.js';
 import * as fs from "node:fs";
@@ -5595,6 +5596,7 @@ async function createKodaXRuntimeInternal(
   };
   const runService = await createRuntimeRunService({
     invocations,
+    repoIntelEngine,
     activeCompactions,
     extensionRuntime: (sessionId) => integrations.forSession(sessionId),
     executionFacts,
@@ -6052,7 +6054,7 @@ async function createKodaXRuntimeInternal(
           } });
           save(); return release;
         };
-        const runOptions = buildRunOptions({ record, events, authorizeForcedPermission,
+        const runOptions = buildRunOptions({ record, events, authorizeForcedPermission, repoIntelEngine,
           options: { ...effective, abortSignal: signal, guardrails: [...(effective.guardrails ?? []), guardrail] },
           defaultConfigHome: configHome, provider, model: effective.modelOverride ?? effective.model, sessionManager,
           hasPendingInputs: () => false, consumePendingInputs: async () => [] });
@@ -10721,6 +10723,8 @@ async function createRuntimeRunService(deps: {
     close(): void;
   };
   readonly agentPlane?: AgentExecutorPlane;
+  /** The Host's RepoIntel engine, when it runs one; each Run's tools ask it about their repository. */
+  readonly repoIntelEngine?: RepoIntelSupervisor;
   readonly artifacts: RuntimeArtifactStore;
   readonly bus: RuntimeEventBus;
   readonly defaultModel?: string;
@@ -12281,6 +12285,7 @@ async function createRuntimeRunService(deps: {
     };
         const createRunOptions = () => buildRunOptions({
       agentPlane: deps.agentPlane,
+      repoIntelEngine: deps.repoIntelEngine,
       authorizeForcedPermission,
       defaultConfigHome: deps.defaultConfigHome,
       events,
@@ -16063,6 +16068,7 @@ function buildRunOptions(input: {
   readonly consumeSideMessages?: NonNullable<NonNullable<KodaXOptions['context']>['interruptInput']>['consumeSideMessages'];
   readonly consumePendingInputs: NonNullable<NonNullable<KodaXOptions['context']>['interruptInput']>['consumePendingInputs'];
   readonly agentPlane?: AgentExecutorPlane;
+  readonly repoIntelEngine?: RepoIntelSupervisor;
   readonly authorizeForcedPermission: (
     call: RunnerToolCall,
   ) => Promise<RuntimePermissionToolDecision>;
@@ -16092,6 +16098,8 @@ function buildRunOptions(input: {
     shellSandbox: callerShellSandbox,
     trustedTextMutationHost: _callerTrustedTextMutationHost,
     goalRuntime: _callerGoalRuntime,
+    // The repository index is the Host's, bound below to the repository this Run works in.
+    repoIntel: _callerRepoIntel,
     // The conversation id sent to gateways is the Host session's, never a caller's choice.
     contextIdentitySessionId: _callerContextIdentitySessionId,
     ...ownerSafeContext
@@ -16279,6 +16287,7 @@ function buildRunOptions(input: {
       visualObservationOwner: isForkInvocation ? undefined : createSessionVisualObservationOwner(sessionManager.storage,
         record.sessionId, sessionVisualMediaDirectory(sessionManager.storage.getSessionsDir(), record.sessionId)),
       ...(!isForkInvocation && record.goalRuntime ? { goalRuntime: record.goalRuntime } : {}),
+      ...(input.repoIntelEngine ? { repoIntel: repoIntelQueryFor(input.repoIntelEngine, workspaceRoot) } : {}),
       runtimeRunId: record.runId,
       configHome: input.defaultConfigHome,
       shellSandbox: restrictedModeShellSandbox,

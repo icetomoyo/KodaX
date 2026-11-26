@@ -11,7 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   connectRepoIntelEngine, createRepoIntelSupervisor, repoIntelEngineProtocolProblem,
-  type RepoIntelEngineConnection, type RepoIntelSupervisor,
+  type RepoIntelEngineConnection, type RepoIntelQuery, type RepoIntelSupervisor,
 } from '@kodax-ai/coding';
 import type { KodaXToolResultBlock } from '@kodax-ai/agent';
 import { toolResultFileChange } from './client-canonical-tools.js';
@@ -110,6 +110,11 @@ export async function inspectRepoIntelEngine(configHome: string, env: NodeJS.Pro
   } finally {
     await connection?.stop(INSPECT_TIMEOUT_MS);
   }
+}
+
+/** The engine as one Run's tools ask it: about the repository the Run works in. */
+export function repoIntelQueryFor(engine: RepoIntelSupervisor, root: string): RepoIntelQuery {
+  return { root, request: (method, params) => engine.query(root, method, params) };
 }
 
 /** The repository-relative path an edit changed, written with `/` as git lists it. */
