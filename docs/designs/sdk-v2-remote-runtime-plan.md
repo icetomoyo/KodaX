@@ -2308,7 +2308,7 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
 
 1. 给 Space 的迁移说明：Space 用到的每个 v1 调用对应哪个 v2 方法，行为、错误码和身份有什么不同。写进 `docs/SDK_MIGRATION.md`，交给 Space 线程。**状态**：2026-11-24 写入"协议 v2：v1 方法对照"一节，覆盖握手里的全部 140 个方法，`methods.contract.json` 有的方法表里都有。
 2. 按 Space 的反馈补方法：§12 第 1 条列的调用点由 Space 线程核对。有调用方的，SDK 补上对应的 v2 方法。
-3. 授权方租约：形状按 Space 线程给出的真实调用点定（见"第 9 项的落地细节"）。
+3. ~~授权方租约~~：2026-11-26 改为不做。Space 的"专家"用 Session 策略表达，见下面"第 3 项的设计"（待用户确认）。
 4. Artifact SDK 改为按 blob 引用匹配附件（D11）。Artifact SDK 是 KodaX 的包，这一项归 SDK。**状态**：2026-11-24 落地，见下面"第 4 项的落地细节"。
 
 第 4 项的落地细节（2026-11-24 用户确认）：
@@ -2319,6 +2319,67 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
 - 元数据：工具条目的文本把输出的每个文本块按行拼起来，所以取第一行作为元数据 JSON（输出已存盘或被截断时用 `item.read` 读到第一个换行为止，上限 2 MB）。
 - 图片：条目上恰好一个 image 附件，按它的 `blobId` 用 `blob.read` 分块读。每块返回的 `sha256` 必须等于工具报告的图片哈希，`mediaType` 必须是 `image/png`，长度和各块一致；读完再按 Node 端口同样的规则校验像素。工具结果的附件不带 `sha256`，所以哈希比对靠 `blob.read`。
 - 已验证：`host-port.test.ts`（内联和存盘两种输出读到同样的字节；别的 Run 的条目、两个条目、没有或多个图片、哈希不符、字节损坏、Run 失败都被拒，且不多读 blob；中止时只停自己的 Run 并合并 Stop 的失败；Host 拒绝启动时不再启动）；host-rpc 集成测试用真实 Host、真实 `read` 工具和 `createKodaXHostClient`，`readEvidence` 读回的字节等于原图。
+
+第 3 项的设计（2026-11-26；两处缺口已落地，`defaultSkill` 待用户确认）：
+
+**结论**：v2 不做授权方租约。
+
+- Space 的"专家"就是 Session 策略，换专家就是 `session.policy.update`。
+- v2 要加一个字段，补两处自己的缺口。
+- v1 的其余规则分两类：一类由 Host 内部继续保证，另一类的前提在 v2 里不存在了，直接删掉。
+
+**v1 这套设计的问题**：
+
+1. 每个 Run 开始前都要回调客户端。Space Main 不在时，排队的输入全部失败（`execution_binding_unavailable`）。Host 能不能干活，取决于另一个进程在不在。
+2. 两层间接，还逼客户端存状态。
+   - `authorizeExecution` 先只返回 `{binding:{leaseId}}`，Host 再通过 `executionBindings` 回调去要真正的授权。
+   - 插话要求授权和目标 Run 完全相同。Space 只好按输入缓存自己返回过的授权，插话时原样再交一次（Space `runtime-host-adapter.ts:6985-7192`，以及 247 行的 `runtime-input-authorization-store.ts`）。
+   - 所以插话时那次回调什么也没判断，只是走个形式。
+3. 业务快照不透明。
+   - Host 存着 `businessBinding.data`，自己却读不懂。16 KiB 的上限也没有依据。
+   - 恢复时要客户端拿快照重建原来的专家（Space `partner-host-tools.ts:229`）。
+   - 真正的要求只是"恢复时还是原来的专家"。Host 记住 Run 开始时的配置就能做到。
+4. 它鼓励每轮改系统提示词。
+   - Space 每个 Run 都把人设、资料摘要和按问题检索到的证据拼进 `agentProfile.instructions`（`partner-host-tools.ts:202`）。
+   - 结果是系统提示词每轮都变，提示词缓存每轮都失效。
+   - 按问题检索在 Space 里由 `KODAX_SPACE_PARTNER_KNOWLEDGE_AUTO_RECALL` 打开，默认是关的。
+5. 规则是靠补丁叠出来的：`plainRunBoundary`、旧记录里 `skill:true / explicitSkill:null` 的歧义、插话解析后再核一遍目标，都是两轮独立审查之后补上的（`SDK_MIGRATION.md` 执行绑定一节）。
+6. 授权的键里含有连接实例身份。所以同一个人换一个客户端，就不能对带绑定的 Run 插话（M1a 身份一节"同一个人"那条）。
+
+**v1 每条规则在 v2 里的去向**：
+
+| v1 规则 | v2 | 理由 |
+|---|---|---|
+| 准入时回调 Main，读最新提交的专家和连接器 | Session 策略，在 Run 开始时读。排队的输入在消费时才开 Run（`sdk-runtime.ts:13699`），所以排队期间改的策略对它生效 | 专家是数据，不需要回调 |
+| 人设、工具上限 | 策略已有的 `agentProfile`、`tools` | 已落地 |
+| `profile.defaultSkill` | 策略新增 `defaultSkill: {name}`，Host 沿用现有的准备逻辑 | Space 有调用方（`partner-host-tools.ts:198`） |
+| `profile.requiredWorkMode` | 不加 | Space 只用 `agent`。工具上限已经限住了能做什么，工作模式不是安全边界。真要按 Session 锁模式时再加 |
+| `profile.taskVerification` | 不加 | 没有调用方。它带命令和环境变量，属于执行授权，理由同 `agentProfile.verification` |
+| 凭证、Host Tool（连接器） | Session 级租约绑定。换连接器就是登记新租约，再 `policy.update` | M1b 已落地 |
+| `workflowHostPolicy` | 不放进 Session 策略 | Space 的值是全局的，已经用 Host 调用同步（`syncWorkflowConcurrency`）。需要按 Session 区分时再加 |
+| `businessBinding {id, revision, data}`、16 KiB 上限 | 删 | 见问题 3 |
+| 恢复不能换专家（`execution_binding_changed`） | 恢复沿用 Run 开始时的人设、提示词和 `defaultSkill`。当前策略只能再收窄工具、预算和交互方式。租约用当前绑定的那份 | 下面的缺口 1 |
+| 插话要比较完整的授权键 | 删 | 插话不带授权，进入的 Run 保持它开始时的策略，没有东西能被放宽。换专家后对旧 Run 插话，回答的仍是旧专家，也就是用户正看着的那个 Run |
+| redirect 保存显式方法名；消费前方法没了就报 `default_skill_unavailable`，不回落到默认方法 | 不变 | Host 内部规则，和协议版本无关 |
+| `plainRunBoundary` | 不变 | Host 内部的持久字段，不出现在协议上 |
+| 排队失败时保留输入，带上 `admissionError`，不自动重试 | 不变。消费时开不了 Run 的输入（绑定方不在、默认方法没了）留在队列里，带上 `admissionError`。客户端撤回，或者用新输入重提 | 输入可能隔很久才跑，要不要再跑由用户决定 |
+| 原 principal 用同一个 inputId 重新绑定 | 删 | v2 的权限挂在 Session 上，不在提交者手里，不存在"借谁的授权"的问题 |
+| 禁用或撤销专家时必须拒绝，不能悄悄变成普通 Partner | 平台先用 `input.withdraw` 撤回不想跑的排队输入，再 `policy.update` | 不加"关闭 Session"机制。两步之间新提交的输入，是在专家还可用时交的，按原专家跑可以接受 |
+| 每轮按问题检索证据，拼进人设 | 不放进策略 | 见问题 4；Space 默认关着。打开时有两条路：让模型自己调现有的知识库工具；或者由可信提交者放进这一轮 Run 的 `prompt`，这样它仍然每轮都变 |
+| Main 不在时 | 静态策略不需要 Main。绑了凭证而绑定方不在时：直接提交报 `lease_holder_away`，排队的输入在消费时得到同样的 `admissionError`。只绑了工具时：调用等绑定方回来 | M1b 的规则不变，只是排队的输入也改在消费时判断 |
+| 独立 Actor 有自己的准入 | 已落地（`actor.*`：自带的租约优先，其次 Session 租约，最后 Host 的 key） | — |
+| 命令、review、工具、Workflow、compaction、probe 各自授权 | 不变 | 见第 9 项"已知的缺口" |
+
+**要改的代码**（按 TDD 做）：
+
+1. 策略新增 `defaultSkill`：在 `session.create` 和 `policy.update` 里校验，由 `policy.get` 返回，Run 开始时接到现有的默认方法逻辑上。
+2. 缺口 1，恢复会换专家：`sdk-runtime.ts:12985` 原来对恢复的 Run 整份再套一次当前策略，`applySessionPolicy` 会用当前的 `agentProfile` 和 `prompt` 盖掉原来的。改成恢复时只收窄限制。**状态**：2026-11-26 落地。`session-policy.ts` 的 `sessionPolicyLimits` 只取工具、预算和交互方式，`startRun` 和 Actor 轮次的恢复路径都用它。
+3. 缺口 2，排队的输入用旧租约：Session 租约原来在提交时解析（`server.ts:2728`），排队期间换了租约，排着的输入还在用旧的，和策略的静态部分不一致。改成在开 Run 时解析；开不了的走 `admissionError`。**状态**：2026-11-26 落地。`input.submit` 的执行上下文带 `refresh`，队列在排空和轮次边界合并时都先重读 Session 租约；租约变了的输入另开自己的 Run。绑定方不在时，凭证和工具都报 `execution_binding_unavailable`（原因 `lease_holder_away`），输入留在队列里。
+
+- 已验证：`host-rpc.test.ts` 用真实 Host 测了三件事。恢复的 Run 仍是原来的人设和提示词，工具按当前策略收窄。排队期间换了工具租约，排着的输入用上新的。排队期间改绑凭证、绑定方离开，输入留在队列里并带上 `admissionError`，还能撤回。
+- 还没做：上表"插话要比较完整的授权键"一行。现在执行上下文的键仍含连接的 principal，同一个人换个客户端，对绑了 Session 租约的 Run 插话会被拒（问题 6）。
+
+**不做**：授权方租约、业务快照、关闭 Session、按问题动态授权的钩子。
 
 等 Space 那边才能做的，记在这里是因为 SDK 有事项等着它：
 
@@ -2492,7 +2553,7 @@ v1 只需要在 **Host** 里保留一段时间，原因是一台机器上的 Hos
 - 窗口从发布 v2 的版本算起。v2 晚于 `v0.7.98` 发布时，同时带两个协议的版本不足 2 个，届时重新确认删除线。
 - 删除前要先落地的（2026-11-23 协议审查，用户同意，FEATURE_314 里有同样的清单）：
   - ~~`actor.spawn` 和 `actor.followup`~~：2026-11-23 落地（子代理的落地细节）。
-  - M1c 第 3 项的授权方租约。
+  - M1c 第 3 项：不做授权方租约，改为策略的 `defaultSkill` 加两处缺口（见"第 3 项的设计"，待用户确认）。
   - ~~`kodax acp` 改走 v2~~：2026-11-23 落地（ACP 的落地细节）。
   - ~~`kodax a2a` 的探测改走 v2，`agent.registration.*` 留给本机 owner~~：2026-11-23 落地。`kodax a2a` 改 A2A 配置之前，对每个在跑的 Host 用 v2 的 `host.get` 看 `integrations.domains` 里有没有 `a2a`，有才说明这个 Host 会重新加载这份配置；v1 看的是 `a2aConfigReconciler` 能力。两者在 `kodax daemon` 起的 Host 上同时成立，配置无效时也一样。`agent.registration.*` 在 settings 平面，本来就只给 owner。Host 存活和归属的判断（`observeRuntimeDaemonHealth`）仍走 v1 的 `initialize`，和 `daemon` 命令一起迁。
   - ~~打印模式像 REPL 一样读 v2 会话视图~~：2026-11-23 落地（打印模式的落地细节）。
