@@ -8115,7 +8115,7 @@ failed instead of reporting a failed task.
 
 ## ADR-083: MCP Disclosure Stays Out of the Cached Prefix, and MCP Tools Get Their Own Permission Rules
 
-**Status**: Accepted (2026-11-25). Unreleased. Numbered after KodaX-next-dev's
+**Status**: Accepted (2026-11-25). Shipped in v0.7.97-rc.3. Numbered after KodaX-next-dev's
 ADR-082 so the next merge does not collide.
 
 **Context**: An audit of the MCP integration, compared with opencode, pi and
@@ -8205,7 +8205,7 @@ after that, and in how calls ran:
 
 ## ADR-084: Writer Lanes Dispatch on Their Area, Not on Exact Files
 
-**Status**: Accepted (2026-11-26). Unreleased.
+**Status**: Accepted (2026-11-26). Shipped in v0.7.97-rc.3.
 
 **Context**: The owner noticed fewer subagents in recent versions. A live
 probe (real Runtime and models, stopped at the first `spawn_agent`) showed

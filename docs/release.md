@@ -48,10 +48,115 @@ on one commit.
   The step limit is ten minutes because the passing Windows suite alone takes
   about 4.6 minutes.
 
+## v0.7.97-rc.3 release preparation
+
+Release state: `v0.7.97-rc.3` is a candidate awaiting the publishing
+dispatch. npm publication has not occurred. The candidate is the third
+release candidate of the v0.7.97 line: MCP detail on demand (ADR-083),
+the PowerShell-free Windows sandbox helper (Issue 443), one writer lane
+per independent fix (ADR-084), temporal artifact evidence (FEATURE_320)
+and unique memory tool-outcome ids. MCP keeps its resident manifest in
+the retained Managed Run Context and discloses detail on demand:
+`mcp_search` rows carry an argument signature, `mcp_describe` accepts up
+to 10 ids, a call rejected for its arguments returns the tool's input
+schema, and each server line can carry a cached one-line purpose from
+the initialize result. `mcp_call` follows the target tool's annotations:
+Plan and Edits run a tool marked `readOnlyHint` that is not destructive,
+Edits asks before any other MCP tool, a Session grant binds the MCP tool
+id rather than its arguments, and a failed read-only built-in names a
+same-named MCP tool in its error and never runs it (CAP-025). Server
+configs accept `enabledTools` and `disabledTools`, tool calls default to
+a 300-second timeout restarted by server progress, a stop sends
+`notifications/cancelled`, discovery retries HTTP 408/429/5xx twice, and
+the catalog cache carries a config fingerprint. On Windows, KodaX no
+longer uses PowerShell to write its sandbox helper into `%LOCALAPPDATA%`,
+which Windows Defender had quarantined: the hash-verified helper writes
+and verifies its own protected copy, a cold start launches no
+`powershell.exe`, the effect Job supervisor, Job recovery and the sandbox
+SID probe run as native subcommands with PowerShell only as a fallback,
+and a helper that security software removes fails with
+`daemon_startup_failed`, `reason: 'native_artifact_removed_after_provision'`
+and `retryable: false` (Issue 443; quarantine on a customer machine is
+not yet re-verified). A request listing several independent fixes now
+normally dispatches one writer lane per fix once a quick look shows
+where each fix lives, and fixes that may touch the same files stay in
+one lane (ADR-084). `artifact_open` reports GIF, animated WebP and
+MP4/MOV/WebM timelines, and temporal `artifact_capture` returns PNG
+samples at the requested seconds: GIF and WebP decode in the prepared
+Chromium, video needs the Host's absolute `ffmpegExecutable` and stays
+unverified without it, and coverage is always `sampled` (FEATURE_320).
+Memory keeps tool outcome observation ids unique when a provider reuses
+a tool call id. Every v0.7.96 stable and v0.7.97-alpha.1 through rc.2
+client contract is retained; `ClientMcpServerConfig` gains the optional
+`enabledTools` and `disabledTools`, and `CapabilityProvider.execute`
+gains an optional options argument that carries `signal`.
+
+The CI/Release in-place upgrade gates now pin the published
+`0.7.97-rc.2` tarball (published 2026-11-23T15:05:11.186Z; registry
+dist.integrity sha512-Ix50r+zx…Op8Q== packs to the same bytes as the
+kodax-ai-kodax-0.7.97-rc.2.tgz asset of the v0.7.97-rc.2 GitHub
+Release, sha256 5b7e96bf…1bab2e1). Run that fixture locally with Windows
+`tar.exe` ahead of Git's GNU `tar` on `PATH`: GNU `tar` reads the `C:`
+drive in the archive path as a remote host.
+
+Local candidate validation on Windows with Node 22.23.1: full build
+(after the version bump, so `dist` carries 0.7.97-rc.3), source and
+test typechecks, the fast tier (3,811 passed, 60 skipped), `test:bundle`
+(110 passed), `npm run test:native`, the installed Artifact SDK gate,
+`test:host-cutover` (3 passed), the real published rc.2 Host in-place
+upgrade against the integrity-pinned public tarball (1 passed), the
+Windows portable tier (3,201 passed, 35 skipped across both shards), the
+two Windows system shards (937 passed, 29 skipped), the complete system
+tier (1,784 passed, 29 skipped), the shell execution contract gate
+(303 passed, 2 skipped), the Runtime Session shell contract gate, and
+the packaged Electron job's steps that need neither Electron nor sandbox
+activation: concurrent Host startup and rebuild refresh, the SDK
+attachment run under CPU contention, the startup ownership and
+cancellation contracts (173 passed), the trusted text integration and
+the WFP probe regression. Under Node 20.20.2 the contract tier passed
+(1,059) and the unit tier had 14,225 passed and one failure:
+`read.test.ts` "reads a giant line and giant lookahead within a bounded
+child heap". On this workstation tsx alone holds about 97 MB of live
+heap at startup, above the test's 96 MB child limit, before any
+repository module loads; the test is untouched by this candidate and
+passed in the rc.2 Linux unit row.
+
+The win-x64 build job's archive gates were reproduced locally with the
+pinned bun 1.4.4: `kodax.exe --version` prints 0.7.97-rc.3, the archive
+carries every required sidecar, and the offline work-mode gate passed on
+that archive (20.6 s). The local binary is a single-manifest host build;
+the five-manifest universal build in Release CI is authoritative.
+
+Two breaks left by the pre-release commits were fixed before the
+dispatch. The FEATURE_320 commit had added its Completed row without the
+curated counters, so `tests/tracker-consistency.test.ts` failed in the
+fast tier (Completed 68 to 69 live rows, Total 95 to 96). The two Edits
+scenarios of `tests/bundled-mcp-output-recovery.test.mjs` call an MCP
+tool with no annotation; ADR-083 makes Edits ask before such a call, the
+fixture answers no prompt, and `host-denied-unlabeled` timed out, which
+fails `test:bundle` in seven CI jobs: the fixture tool now declares
+`readOnlyHint` (8/8 scenarios). The `kodax_manual` topics for MCP,
+permissions, the Windows sandbox helper, writer lanes and temporal
+artifact evidence were brought up to date in the same change set.
+
+This release follows the single publishing dispatch described under
+[Current release execution](#current-release-execution): `target=all`
+with `release_tag=v0.7.97-rc.3` runs Full CI, all five archive builds
+and the npm package gates, then creates the tag at the dispatched
+commit and the GitHub pre-release from that run's artifacts. Ordinary
+branch pushes do not run CI. Cross-platform manual acceptance,
+installed Space/SDK acceptance, the Space dependency bump and npm
+publication remain separate maintainer steps.
+
 ## v0.7.97-rc.2 release preparation
 
-Release state: `v0.7.97-rc.2` is a candidate awaiting the publishing
-dispatch. npm publication has not occurred. The candidate is the
+Release state: `v0.7.97-rc.2` was published on 2026-11-23 as a GitHub
+prerelease from run 45190653439 at `6a23e43c1` (every job green on that
+dispatch's first attempt: Full CI including the packaged Electron daemon
+job, all five archive builds and the npm package gates; 13 assets) and to
+npm on 2026-11-23T15:05:11Z (dist-tag `rc`). The universal npm tarball
+asset is `kodax-ai-kodax-0.7.97-rc.2.tgz`, sha256 `5b7e96bf…1bab2e1`,
+matching `SHA256SUMS`. The candidate was the
 second release candidate of the v0.7.97 line: RepoIntel phase 0, the
 reasoning-replay repairs and the `glm-5.4` listing. RepoIntel keeps to
 what git can answer by default (FEATURE_317): under the default `auto`
@@ -85,8 +190,8 @@ limits and image input are unverified and image input stays off.
 Every v0.7.96 stable and v0.7.97-alpha.1 through rc.1 client contract
 is retained.
 
-The CI/Release in-place upgrade gates now pin the published
-`0.7.97-rc.1` tarball (published 2026-11-23T00:09:21.196Z; registry
+The CI/Release in-place upgrade gates pinned the published
+`0.7.97-rc.1` tarball for this candidate (published 2026-11-23T00:09:21.196Z; registry
 dist.integrity sha512-gQRxS0S5…vI7QA== packs to the same bytes as the
 kodax-ai-kodax-0.7.97-rc.1.tgz asset of the v0.7.97-rc.1 GitHub
 Release, sha256 bfa64c8b…9afe17). Run that fixture locally with Windows
@@ -102,14 +207,14 @@ published rc.1 Host in-place upgrade against the integrity-pinned
 public tarball, `test:bundle` and the fast tier. The packaged Electron
 daemon gate runs in Release CI.
 
-This release follows the single publishing dispatch described under
+This release followed the single publishing dispatch described under
 [Current release execution](#current-release-execution): `target=all`
-with `release_tag=v0.7.97-rc.2` runs Full CI, all five archive builds
-and the npm package gates, then creates the tag at the dispatched
+with `release_tag=v0.7.97-rc.2` ran Full CI, all five archive builds
+and the npm package gates, then created the tag at the dispatched
 commit and the GitHub pre-release from that run's artifacts. Ordinary
 branch pushes do not run CI. Cross-platform manual acceptance,
-installed Space/SDK acceptance, the Space dependency bump and npm
-publication remain separate maintainer steps.
+installed Space/SDK acceptance and the Space dependency bump
+remain separate maintainer steps.
 
 ## v0.7.97-rc.1 release preparation
 

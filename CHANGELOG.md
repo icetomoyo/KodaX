@@ -6,6 +6,35 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.97-rc.3] - 2026-11-27
+
+Third release candidate of the v0.7.97 line: MCP detail on demand
+(ADR-083), the PowerShell-free Windows sandbox helper (Issue 443), one
+writer lane per independent fix (ADR-084) and temporal artifact evidence
+(FEATURE_320). `mcp_search` rows carry an argument signature,
+`mcp_describe` accepts up to 10 ids, a call rejected for its arguments
+returns the tool's input schema, and each MCP server line in the manifest
+can carry a cached one-line purpose. `mcp_call` follows the target tool's
+annotations: Plan and Edits run tools marked `readOnlyHint` that are not
+destructive, Edits asks before any other MCP tool, and a Session approval
+covers one MCP tool with any arguments. A failed read-only built-in names a
+same-named MCP tool in its error and never runs it (CAP-025). On Windows,
+KodaX no longer uses PowerShell to write its sandbox helper into
+`%LOCALAPPDATA%`, which Windows Defender had quarantined: the helper writes
+and verifies its own protected copy, a cold start launches no
+`powershell.exe`, and a helper that security software removes fails with
+the non-retryable `native_artifact_removed_after_provision`. A request
+that lists several independent fixes now normally runs one writer lane per
+fix. Artifact review samples GIF, animated WebP and MP4/MOV/WebM video:
+temporal `artifact_capture` returns PNG frames at the requested seconds,
+and video needs the Host's `ffmpegExecutable`. Memory keeps tool outcome
+ids unique when a provider reuses a tool call id. Every v0.7.96 stable and
+v0.7.97-alpha.1 through rc.2 client contract is retained;
+`ClientMcpServerConfig` gains the optional `enabledTools` and
+`disabledTools`. npm publication remains a manual maintainer action.
+
 ### Added
 
 - MCP server configs accept `enabledTools` and `disabledTools` (exact tool
@@ -61,6 +90,10 @@ All notable changes to this project will be documented in this file.
   refetches its catalog instead of reusing the stale cache.
 - Stdio MCP server stderr no longer surfaces as errors. It is reported only
   when the process exits unexpectedly.
+- Memory: tool outcome observations keep unique ids when a provider reuses
+  a tool call id within one batch or across rounds of a Run. A repeat
+  inside one batch is skipped, because it carries no new result; an id
+  already seen earlier in the Run gets a sequence suffix.
 
 ---
 

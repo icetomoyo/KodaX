@@ -11,30 +11,30 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.97-rc.2` (Git tag); `v0.7.96` remains the last stable release |
-| Current package version | `@kodax-ai/kodax@0.7.97-rc.2`; npm `rc` is `0.7.97-rc.1` (published 2026-11-23T00:09:21Z); rc.2 npm publication remains a manual maintainer step |
+| Current released version | `v0.7.97-rc.3` (Git tag); `v0.7.96` remains the last stable release |
+| Current package version | `@kodax-ai/kodax@0.7.97-rc.3`; npm `rc` is `0.7.97-rc.2` (published 2026-11-23T15:05:11Z); rc.3 npm publication remains a manual maintainer step |
 | Workspace baseline | `llm / agent / coding / repl` 4 core packages + private optional `artifacts` source workspace; one public npm package |
 | Released implementation | [FEATURE_301 v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) — managed Artifact SDK and PPT review loop, released in `v0.7.97-alpha.4` and extended with the unified Artifact SDK in `v0.7.97-alpha.5`; [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3` and extended with startup streamlining, Session recency ordering, draft admission, concurrent-launch recovery and shared-Session Host ownership resolution through `v0.7.97-alpha.7`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
 | Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement released in alpha.4; missing visual capabilities remain unverified; [design](ADR.md#verification-responsibility-and-tradeoffs) |
 | Artifact distribution revision | `2026-10-18` — one `@kodax-ai/kodax` npm package; four `/artifacts` subpaths and resources staged in the main tarball; local implementation, not yet published |
 | Current Artifact SDK additions | Unified visual evidence SDK and format backends released in `v0.7.97-alpha.5`: nine public operations, PDF/image/SVG/DOCX evidence, local HTML/SMIL capture and same-Host PNG reads; [support and limits](ARTIFACT_SDK.md) |
-| Current development | `v0.7.97-rc.2` RepoIntel phase 0, reasoning-replay repairs and the `glm-5.4` listing — RepoIntel keeps to what git can answer by default (FEATURE_317): under the default `auto` mode agents get `repo_overview`, `changed_scope` and `changed_diff` while the semantic tools, the injected module/impact context and the background index build need `repoIntelligenceMode` `full` or `light`, truncated lists report omitted counts with no placeholder results, and the index moves from `.agent/repo-intelligence/` in the workspace to `<config home>/repo-intelligence/`; switching models no longer teaches the new model to write its thinking into the reply because readable reasoning replays only through the target's reasoning channel (Issue 441), Gemini and pi-messages endpoints replay foreign tool calls as real calls instead of `<prior_tool_call>` text (Issue 442), and `zhipu-coding` lists `glm-5.4` with the `glm-5.3-flash` settings (unverified upstream at listing time); [release preparation](release.md#v0797-rc2-release-preparation). On top of the rc.1 model catalog refresh and late provider/Host/REPL repairs. Cross-platform manual acceptance, installed Space/SDK acceptance, the Space dependency bump and the original slow first resume after rebuild remain open; Issue 395's intermittent failure cause and Issue 394's whole-task non-inferiority remain unproven. |
+| Current development | `v0.7.97-rc.3` MCP detail on demand, the PowerShell-free Windows sandbox helper, per-fix writer lanes and temporal artifact evidence — `mcp_search` rows carry an argument signature, `mcp_describe` accepts up to 10 ids, a call rejected for its arguments returns the tool's input schema, and each MCP server line can carry a cached one-line purpose (ADR-083); `mcp_call` follows the target tool's annotations, so Plan and Edits run tools marked `readOnlyHint` that are not destructive while Edits asks before any other MCP tool, a Session grant binds the MCP tool id rather than its arguments, and a failed read-only built-in names a same-named MCP tool in its error without running it (CAP-025); server configs accept `enabledTools`/`disabledTools` and tool calls default to a 300-second timeout restarted by server progress; Windows provisions and supervises its sandbox helpers through the native helper instead of PowerShell, and a helper that security software removes fails with the non-retryable `native_artifact_removed_after_provision` (Issue 443); a request listing several independent fixes dispatches one writer lane per fix (ADR-084); temporal `artifact_capture` samples GIF, animated WebP and MP4/MOV/WebM video at the requested seconds (FEATURE_320); memory keeps tool outcome ids unique when a provider reuses a tool call id; [release preparation](release.md#v0797-rc3-release-preparation). On top of the rc.2 RepoIntel phase 0, reasoning-replay repairs and the `glm-5.4` listing. Cross-platform manual acceptance, installed Space/SDK acceptance, the Space dependency bump and the original slow first resume after rebuild remain open; Issue 395's intermittent failure cause and Issue 394's whole-task non-inferiority remain unproven. |
 | Visual harness implementation | P3/P4/P5/P6 implemented within declared scope and released in `v0.7.97-beta.5` through the next-dev integration; [final ID/receipt contract delivery](designs/visual-harness-id-contract-delivery-2026-10-30.md). P7 task-value evaluation concluded **mixed; net task-quality/token value unproven**, against optimized pre-visual 1826cc22; [final review and limits](designs/visual-harness-current-version-closure-2026-10-30.md). The 2026-10-29 plan's "not executed" state and old r3 single-response results are historical, not the current outcome. Historical default suite 18,094 passed / 0 failed; earlier failures and unlocated causes remain recorded; [mainline integration acceptance](designs/next-dev-integration-execution-2026-11-09.md). No new feature ID/version assigned |
-| Roadmap updated | `2026-11-23` — rc.2 prepared on top of the npm-published rc.1 with RepoIntel phase 0 (FEATURE_317 default surface), the reasoning/tool-call replay repairs (Issues 441-442) and `glm-5.4` on zhipu-coding; rc.1 published with the model catalog refresh; FEATURE_300 remains Planned |
+| Roadmap updated | `2026-11-27` — rc.3 prepared on top of the npm-published rc.2 with MCP on-demand disclosure and annotation-gated `mcp_call` (ADR-083), the PowerShell-free Windows sandbox helper (Issue 443), one writer lane per independent fix (ADR-084), temporal artifact evidence (FEATURE_320, Completed) and unique memory tool-outcome ids; rc.2 published with RepoIntel phase 0; FEATURE_300 remains Planned |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
-| Total tracked features | `95` |
+| Total tracked features | `96` |
 | InProgress | `3` |
 | Planned | `19` |
-| Completed | `67` |
+| Completed | `68` |
 | Reviewed out of active roadmap | `6` (`108, 231, 232, 235, 238, 244`) |
-| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 310, 311, 312, 313, 317` |
+| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 310, 311, 312, 313, 317, 320` |
 | Archive cutoff | Shipped / canceled / absorbed / shelved items through `v0.7.49` are archived. |
 
 ### 一览表
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 68 | `317, 311, 310, 306, 305, 304, 303, 302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| Completed | 69 | `320, 317, 311, 310, 306, 305, 304, 303, 302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 2 | `298, 225` | `298`: cross-platform/manual release verification pending. `225` remains the bounded cleanup. |
 | Planned, SDK v2 | 2 | `312, 313` | Specify in the SDK v2 contract on `KodaX-next-dev`; only the stall cap of `313` can land on mainline first. |
 | Planned, 0.7.99 | 1 | `300` | Consolidate ordinary Git execution in coding; preserve specialized executors and share only the macOS platform check across layers. |
@@ -555,6 +555,52 @@ Final frozen package **80** and historical/real-alpha.11 Host gates **4** passed
 and build fingerprints remained unchanged throughout. See the J guide for exact checkpoints.
 Space stays independently at `da531f0a`; its historical I counts do not certify a newly paired
 Space build. No push/publication.
+
+## v0.7.97-rc.3 Release Record
+
+`v0.7.97-rc.3` is the third release candidate of the v0.7.97 line: MCP
+detail on demand (ADR-083), the PowerShell-free Windows sandbox helper
+(Issue 443), one writer lane per independent fix (ADR-084), temporal
+artifact evidence (FEATURE_320) and unique memory tool-outcome ids. MCP
+keeps its resident manifest in the retained Managed Run Context and
+discloses detail on demand: `mcp_search` rows carry an argument
+signature, `mcp_describe` accepts up to 10 ids, a call rejected for its
+arguments returns the tool's input schema, and each server line can carry
+a cached one-line purpose from the initialize result. `mcp_call` follows
+the target tool's annotations: Plan and Edits run a tool marked
+`readOnlyHint` that is not destructive, Edits asks before any other MCP
+tool, a Session grant binds the MCP tool id rather than its arguments, and
+a failed read-only built-in names a same-named MCP tool in its error and
+never runs it (CAP-025). Server configs accept `enabledTools` and
+`disabledTools`, tool calls default to a 300-second timeout restarted by
+server progress, a stop sends `notifications/cancelled`, discovery retries
+HTTP 408/429/5xx twice, and the catalog cache carries a config
+fingerprint. On Windows, KodaX no longer uses PowerShell to write its
+sandbox helper into `%LOCALAPPDATA%`, which Windows Defender had
+quarantined: the hash-verified helper writes and verifies its own
+protected copy, a cold start launches no `powershell.exe`, the effect Job
+supervisor, Job recovery and the sandbox SID probe run as native
+subcommands with PowerShell only as a fallback, and a helper that security
+software removes fails with `daemon_startup_failed`,
+`reason: 'native_artifact_removed_after_provision'` and `retryable: false`
+(Issue 443; quarantine on a customer machine is not yet re-verified). A
+request listing several independent fixes now normally dispatches one
+writer lane per fix once a quick look shows where each fix lives, and
+fixes that may touch the same files stay in one lane (ADR-084).
+`artifact_open` reports GIF, animated WebP and MP4/MOV/WebM timelines, and
+temporal `artifact_capture` returns PNG samples at the requested seconds:
+GIF and WebP decode in the prepared Chromium, video needs the Host's
+absolute `ffmpegExecutable` and stays unverified without it, and coverage
+is always `sampled` (FEATURE_320). Memory keeps tool outcome observation
+ids unique when a provider reuses a tool call id. The CI/Release in-place
+upgrade gate now pins the published rc.2 tarball. Every v0.7.96 stable and
+v0.7.97-alpha.1 through rc.2 client contract is retained;
+`ClientMcpServerConfig` gains the optional `enabledTools` and
+`disabledTools`, and `CapabilityProvider.execute` gains an optional
+options argument that carries `signal`. The changes are listed in the
+[CHANGELOG](../CHANGELOG.md). Cross-platform manual acceptance, installed
+Space/SDK acceptance, the Space dependency bump and npm publication remain
+manual maintainer steps.
 
 ## v0.7.97-rc.2 Release Record
 
@@ -2576,7 +2622,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 ## 2026-11-26 FEATURE_320 Addition
 
-- Status: Completed 2026-11-26 on `KodaX`, unreleased; ships with the `v0.7.97` final release (owner decision 2026-11-26: build on mainline, not next-dev). ID 320 skips 318–319,
+- Status: Completed 2026-11-26 on `KodaX`, shipped in `v0.7.97-rc.3` (owner decision 2026-11-26: build on mainline, not next-dev). ID 320 skips 318–319,
   which `KodaX-next-dev` already uses. `KodaX-next-dev` touches `packages/artifacts` only through the format-agnostic
   `host-port.ts`, so the merge back is expected to be clean.
 - Source: visual-review covers GIF, video and animation as method only; `artifact_render`/`artifact_capture` reject
@@ -2590,7 +2636,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 ## 2026-11-23 FEATURE_317 Addition
 
-- Status: Completed 2026-11-23, unreleased; ships with the `v0.7.97` final release (rc.1 is out). ID 317 skips 314–316, which
+- Status: Completed 2026-11-23, shipped in `v0.7.97-rc.2`. ID 317 skips 314–316, which
   `KodaX-next-dev` already uses.
 - Source: the 2026-11-23 RepoIntel audit. The name-matched semantic index (sample call-target precision
   42.7%, recall 55.1%) was on the default tool surface, in automatic context injection and in background
@@ -2776,7 +2822,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Version | Design | Notes |
 |---|---|---|---|---|
-| `320` | Temporal Artifact Evidence for GIF, Animated WebP and Video | `v0.7.97` | [v0.7.97](features/v0.7.97.md#feature_320-temporal-artifact-evidence-for-gif-animated-webp-and-video) | `artifact_open` reports GIF, animated WebP and MP4/MOV/WebM timelines; temporal `artifact_capture` returns PNG samples at actual seconds. GIF and WebP decode in the prepared Chromium (`ImageDecoder`); video uses the host's absolute `ffmpegExecutable` and stays unverified without it. Coverage is always `sampled`; render and static capture return `temporal-capture-required`; video may be up to 1 GiB, hashed by streaming. Prompt eval (66 calls, blind-reviewed) recommended ship after the first skill wording was rejected. |
+| `320` | Temporal Artifact Evidence for GIF, Animated WebP and Video | `v0.7.97-rc.3` | [v0.7.97](features/v0.7.97.md#feature_320-temporal-artifact-evidence-for-gif-animated-webp-and-video) | `artifact_open` reports GIF, animated WebP and MP4/MOV/WebM timelines; temporal `artifact_capture` returns PNG samples at actual seconds. GIF and WebP decode in the prepared Chromium (`ImageDecoder`); video uses the host's absolute `ffmpegExecutable` and stays unverified without it. Coverage is always `sampled`; render and static capture return `temporal-capture-required`; video may be up to 1 GiB, hashed by streaming. Prompt eval (66 calls, blind-reviewed) recommended ship after the first skill wording was rejected. |
 | `317` | RepoIntel Phase 0 — Honest Default Surface | `v0.7.97-rc.2` | [v0.7.97](features/v0.7.97.md#feature_317-repointel-phase-0--honest-default-surface) | Default `auto` offers `repo_overview`, `changed_scope` and `changed_diff`; the semantic tools, module/impact injection and the background index build need explicit `full` or `light`, and routing signals come from git changes. Output reports omitted items, not-found names and warming/unavailable indexes instead of placeholders. Storage moves to `<config home>/repo-intelligence`; `target_path` must stay in the workspace. Prompt eval (82 calls, blind-reviewed) recommended ship; `npm run bench:repo-intel-truth` holds the old-engine baseline. KNOWN_ISSUES #133 closed. |
 | `311` | Unified Prompt Chain | `v0.7.97` (shipped in `v0.7.97-beta.12`) | [v0.7.97](features/v0.7.97.md#feature_311-unified-prompt-chain) | Every root Run uses the managed Worker and every entry sends one tool text: the request-time projection, the canonical Worker and tool texts, the direct root engine and `system.md` are deleted. `runs.start({ mode: 'coding' })` is ignored with a warning; the leaf executor stays internal for child Agents. `tests/f311-entry-matrix.test.ts` pins every entry; ADR "Every root Run uses one Worker and one tool text" records it. |
 | `310` | SA Mode Residue Removal | `v0.7.97` (shipped in `v0.7.97-beta.12`) | [v0.7.97](features/v0.7.97.md#feature_310-sa-mode-residue-removal) | Public and config.json `agentMode: 'sa'` normalize the way `amaw` did: managed entries run AMA, `runKodaX` and `runs.start` without a mode treat it as unset, and persisted `'sa'` records stay readable. The SA dispatch branch, Direct Path overlay, `'sa'` labels and the FEATURE_100 golden recorder are gone; ADR "SA mode is retired from every caller" records it. The `sa-mutation-reflection` eval id keeps its name. |

@@ -11,24 +11,24 @@ import { promisify } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // Provision this exact public npm artifact outside the test. CI never downloads implicitly:
-// npm pack @kodax-ai/kodax@0.7.97-rc.1 --ignore-scripts --pack-destination <temp>
-// KODAX_RC1_TARBALL=<temp>/kodax-ai-kodax-0.7.97-rc.1.tgz node --test <this file>
-const archive = process.env.KODAX_RC1_TARBALL;
-const integrity = 'gQRxS0S5FgE6JCvNd1gt+vswILSPQ1QIpjX61S2BrYAKpoF76H+VTa+JNGl+eSxnyiJRiVBJFzMxVmnbRvI7QA==';
+// npm pack @kodax-ai/kodax@0.7.97-rc.2 --ignore-scripts --pack-destination <temp>
+// KODAX_RC2_TARBALL=<temp>/kodax-ai-kodax-0.7.97-rc.2.tgz node --test <this file>
+const archive = process.env.KODAX_RC2_TARBALL;
+const integrity = 'Ix50r+zxPW4CKz1Xl7ohr3s2535SC5VSRKWCWjw4YzswrShj8uz2zlt7s7QESwqnUarYjrdUQVqs57jJ89Op8Q==';
 const repository = fileURLToPath(new URL('..', import.meta.url));
 const execute = promisify(execFile);
 
-test('real rc.1 Host keeps busy work and upgrades in place without losing its Session', {
+test('real rc.2 Host keeps busy work and upgrades in place without losing its Session', {
   timeout: 180_000,
 }, async t => {
-  assert.ok(archive, 'Provide the integrity-pinned rc.1 npm tarball through KODAX_RC1_TARBALL.');
+  assert.ok(archive, 'Provide the integrity-pinned rc.2 npm tarball through KODAX_RC2_TARBALL.');
   const bytes = await readFile(archive);
   assert.equal(createHash('sha512').update(bytes).digest('base64'), integrity);
   const root = await mkdtemp(path.join(await realpath(os.tmpdir()), 'kodax-historical-host-upgrade-'));
   const installation = path.join(root, 'package');
   const homeDir = path.join(root, 'home');
   const configHome = path.join(homeDir, '.kodax');
-  const evidence = { historicalVersion: '0.7.97-rc.1', integrity: `sha512-${integrity}`, stages: [], requests: [] };
+  const evidence = { historicalVersion: '0.7.97-rc.2', integrity: `sha512-${integrity}`, stages: [], requests: [] };
   const env = { ...process.env, KODAX_HOME: configHome, KODAX_TRACING: '0', KODAX_H05_TEST_KEY: 'local-fixture-only' };
   delete env.KODAX_VERSION;
   delete env.KODAX_BUNDLED;

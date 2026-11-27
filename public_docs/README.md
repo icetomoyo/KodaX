@@ -3,8 +3,17 @@
 Documentation for KodaX users, product-client integrators and trusted Host developers.
 
 This development tree implements the unified Product Client contract under
-FEATURE_298/299/301/303/304/305/306. The package version is `0.7.97-rc.2`;
-`v0.7.96` remains the last stable release. `v0.7.97-rc.2` lands RepoIntel
+FEATURE_298/299/301/303/304/305/306. The package version is `0.7.97-rc.3`;
+`v0.7.96` remains the last stable release. `v0.7.97-rc.3` discloses MCP
+detail on demand (`mcp_search` rows carry an argument signature,
+`mcp_describe` accepts up to 10 ids, a rejected call returns the input
+schema, and a server line can carry a cached purpose), gates `mcp_call` by
+the target tool's annotations (Plan and Edits run read-only non-destructive
+tools; Edits asks before any other; `enabledTools`/`disabledTools` hide
+tools), provisions the Windows sandbox helper without PowerShell (Issue 443),
+dispatches one writer lane per independent fix (ADR-084), and samples GIF,
+animated WebP and video frames as temporal evidence (FEATURE_320);
+`v0.7.97-rc.2` lands RepoIntel
 phase 0 (the default tool surface keeps to what git can answer: `repo_overview`,
 `changed_scope` and `changed_diff` under `auto`; the semantic tools and the
 background index need `repoIntelligenceMode` `full`/`light`; the index moves
@@ -114,7 +123,7 @@ Actor settlement and saved-history location/turn resolution shipped in
 support and durable visual observations shipped in `v0.7.97-beta.5`; one
 Host per `KODAX_HOME` with the Host-location `profile` removed shipped in
 `v0.7.97-beta.6`; the Space SDK image projection, attachment and
-approval-attribution corrections shipped in `v0.7.97-beta.7`; the Windows daemon native Job startup repairs shipped in `v0.7.97-beta.8`; data root relocation and steer withdrawal shipped in `v0.7.97-beta.9`; merged-input acknowledgement shipped in `v0.7.97-beta.10`; readable history during a busy Run and tool-neutral Skills shipped in `v0.7.97-beta.11`; one prompt chain for every root Run and final Stop outcomes shipped in `v0.7.97-beta.12`; the Space integration repairs and Session-read cost fixes shipped in `v0.7.97-beta.13`; the model catalog refresh and late provider/Host repairs shipped in `v0.7.97-rc.1`; the RepoIntel phase 0 default surface, reasoning-replay repairs and the `glm-5.4` listing shipped in `v0.7.97-rc.2`. Read the
+approval-attribution corrections shipped in `v0.7.97-beta.7`; the Windows daemon native Job startup repairs shipped in `v0.7.97-beta.8`; data root relocation and steer withdrawal shipped in `v0.7.97-beta.9`; merged-input acknowledgement shipped in `v0.7.97-beta.10`; readable history during a busy Run and tool-neutral Skills shipped in `v0.7.97-beta.11`; one prompt chain for every root Run and final Stop outcomes shipped in `v0.7.97-beta.12`; the Space integration repairs and Session-read cost fixes shipped in `v0.7.97-beta.13`; the model catalog refresh and late provider/Host repairs shipped in `v0.7.97-rc.1`; the RepoIntel phase 0 default surface, reasoning-replay repairs and the `glm-5.4` listing shipped in `v0.7.97-rc.2`; MCP on-demand disclosure and annotation-gated calls, the PowerShell-free Windows sandbox helper, per-fix writer lanes and temporal artifact evidence shipped in `v0.7.97-rc.3`. Read the
 [current SDK alignment](sdk/embedder-guide.md#post-alpha10-sdk-alignment),
 [unified Host cutover](sdk/embedder-guide.md#unified-host-sdk-cutover-shipped-in-v0797-alpha12)
 and [one Host per KODAX_HOME](../docs/SDK_MIGRATION.md#one-host-per-kodax_home-profile-removed)
