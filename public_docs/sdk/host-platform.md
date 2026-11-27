@@ -14,7 +14,7 @@ they get. The Host does not keep tenants apart inside itself.
 ## Who may call what
 
 The Host sorts its methods into planes, and each role reaches some of them. The data
-plane holds Sessions, Runs, history, child Agents, memory and learning. The settings
+plane holds Sessions, Runs, history, child Agents and memory. The settings
 plane holds the person's configuration, providers, MCP servers and extensions. The
 trusted plane holds leases, `session.policy.update`, `session.promote` and the trusted
 params below. The local plane manages the Host itself and paths on its machine.
@@ -297,11 +297,10 @@ Grants made by `allow_session` and `allow_always` answers are listed by
 `permission.grant.list` and taken back with `permission.grant.revoke`; a `service` may
 call both. The Host's security log records each decision as `permission_decided`.
 
-## Memory and learning
+## Memory
 
-Memory holds the notes the agent keeps about the person and a project. Learning holds
-the Skills the Host learned from Sessions. Both are on the data plane, so every role
-may use them.
+Memory holds the notes the agent keeps about the person and a project. It is on the
+data plane, so every role may use it.
 
 - Memory methods are `memory.list`, `get`, `create`, `update`, `approve` and `forget`.
   `scope` is `user`, which follows the person into every project, or `project`, named
@@ -311,9 +310,6 @@ may use them.
   forgetting a note that is gone succeeds.
 - A note that looks like a key or token fails with `invalid_params`, reason
   `secret_in_note`.
-- `learning.*` records what the person decides about each learned Skill. A decision
-  whose outcome already holds succeeds and does nothing. One the lifecycle does not
-  allow fails with `conflict`, reason `invalid_transition`.
 
 ```ts
 const { note } = await host.call('memory.get', { scope: 'user', id: 'style' });
@@ -323,9 +319,8 @@ await host.call('memory.update', {
 });
 ```
 
-`ifRevision` applies a change only to the version you read. For memory it is the
-note's `revision`, a string. For learning it is the capability's `revision`, a number.
-Something that changed meanwhile fails with `conflict`, reason `revision_mismatch`.
+`ifRevision` applies a change only to the version you read: the note's `revision`, a
+string. A note that changed meanwhile fails with `conflict`, reason `revision_mismatch`.
 Read it again, then decide.
 
 ## Settings, MCP and extensions

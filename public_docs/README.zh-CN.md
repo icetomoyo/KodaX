@@ -31,7 +31,7 @@
 - [Host 客户端](./sdk/host-client.zh-CN.md) — 连接 Host、跟随会话、提交输入、回答交互。
 - [Host 平台](./sdk/host-platform.zh-CN.md) — 角色、Session 策略、租约、子 Agent、A2A 与 ACP。
 - [进程内使用](./sdk/in-process.zh-CN.md) — 在你自己的 Node 进程里运行 KodaX。
-- [可选模块](./sdk/optional-modules.zh-CN.md) — Artifact SDK、沙箱、媒体输入、Skill 学习。
+- [可选模块](./sdk/optional-modules.zh-CN.md) — Artifact SDK、沙箱、媒体输入、旧版记忆。
 - [Host 协议 v2 参考](./sdk/host-protocol-reference.md) — 全部方法，由代码生成（英文）。
 - [SDK 迁移指南](../docs/SDK_MIGRATION.md) — 新旧调用对照、生命周期和迁移验收（中文）。
 - [客户端契约](../docs/CLIENT_CONTRACT.md) — 完整产品方法清单、观测、历史记录与错误语义。

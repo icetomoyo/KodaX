@@ -54,6 +54,15 @@ All notable changes to this project will be documented in this file.
   as every other command group does.
 - In the REPL, `/repointel`, `/ri` and `/plan` are removed. Typing them points
   at `/repo-intel status` and `/mode plan`.
+- KodaX no longer creates Skills on its own (ADR-085). Evals found that a
+  learned Skill did no better than a note on a later task, and that notes
+  alone capture as much from a session. Reflection after a run now saves
+  procedures as memory notes. Removed with it: `/learn`, the learning inbox
+  and status summary, `/workflow pending`, `/skill pending`,
+  `runtime.learning`, `client.learning`, and the Host `learning.*` methods.
+  Learned Skills no longer load. When a Host starts, each learned Skill you
+  approved is copied once into `~/.kodax/skills/` as your own Skill; one
+  you never approved is not. See `docs/SDK_MIGRATION.md`.
 
 ### Added
 
@@ -86,9 +95,8 @@ All notable changes to this project will be documented in this file.
 - Protocol v2 `view.subscribe` with target `{kind: 'host'}` keeps a
   client's copy of the Host document: the newest 50 Sessions that are not
   archived, the Runs that have not ended, what any Session waits for a person
-  to answer, and the learning counts. It replaces `learning.subscribe`. The
-  Host reads it again when one of those may have changed, at most once a
-  second, and sends only what differs. `KodaXHostClient.observeHost` follows
+  to answer. The Host reads it again when one of those may have changed, at
+  most once a second, and sends only what differs. `KodaXHostClient.observeHost` follows
   it across reconnects, and the connection state reads
   `{state: 'connected', draining: true}` while the Host is stopping.
   `@kodax-ai/kodax/client` also exports `HostErrorCode`.
@@ -135,13 +143,6 @@ All notable changes to this project will be documented in this file.
   (`memory.list/get/create/update/approve/forget`). These are the notes the
   Runs in that project read. A web client built on the SDK can manage memory
   without the local-only v1 methods.
-- Every v2 client, not only the owner, can see and decide on the Skills the
-  Host learned (`learning.*`). A decision sent again succeeds when the Skill
-  already is what it asked for, so the SDK resends all eight decisions; a
-  rollback sent again no longer rolls back twice. The six decisions that move a
-  Skill's lifecycle take an optional `ifRevision`, so a decision does not land
-  on content the person did not see; v1 and `RuntimeLearningService` take it
-  too. Only the owner sees where the Skill is on the Host.
 - `@kodax-ai/kodax/client` now exports a v2 Host protocol client.
   `ensureKodaXHostClient` starts the Host of a home when none runs, connects
   over v2, and starts the Host again if it dies. `call` takes typed params and
@@ -258,6 +259,14 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Automatic memory writes from the episode reviewer are no longer rejected
+  when the model names its evidence as the record to update (Issue 446),
+  and one badly formed memory key no longer throws away the whole review
+  (Issue 447).
+- Reflection no longer loses a session's lessons: after a compaction, when
+  the session ends before the next pass, or on an exit or crash. Evidence
+  owed a pass is saved first and reflected later. A rewrite can no longer
+  replace a long note it saw only part of.
 - A multi-line `edit` or `multi_edit` on a CRLF file no longer joins the next
   line onto the end of the replacement (Issue 444). The same happened on LF
   files when the anchor differed only in whitespace.

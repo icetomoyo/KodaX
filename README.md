@@ -247,7 +247,7 @@ kodax /tdd packages/repl/src/
 
 Built-in skills: `code-review`, `tdd`, `git-workflow`, `skill-creator`, `visual-review`.
 
-Custom skills live in `~/.kodax/skills/`. The agent can build new skills for you via `skill-creator` and promote them to your catalog with `/learn promote`.
+Custom skills live in `~/.kodax/skills/`. The agent can build new skills for you with `skill-creator`.
 
 ---
 

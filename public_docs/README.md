@@ -139,7 +139,7 @@ latency remains tracked in Issue 371.
 - [Host client](./sdk/host-client.md) — connect to a Host, follow Sessions, submit input, answer interactions.
 - [Host platform](./sdk/host-platform.md) — roles, Session policy, leases, child Agents, A2A and ACP.
 - [In-process](./sdk/in-process.md) — run KodaX inside your own Node process.
-- [Optional modules](./sdk/optional-modules.md) — Artifact SDK, sandbox, media input, Skill learning.
+- [Optional modules](./sdk/optional-modules.md) — Artifact SDK, sandbox, media input, legacy memory.
 - [Host protocol v2 reference](./sdk/host-protocol-reference.md) — every method, generated from the code.
 - [SDK migration](../docs/SDK_MIGRATION.md) — old-to-new calls, lifecycle and migration acceptance (Chinese).
 - [Client contract](../docs/CLIENT_CONTRACT.md) — complete Product method inventory, observation, history and error semantics.

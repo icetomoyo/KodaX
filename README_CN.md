@@ -247,7 +247,7 @@ kodax /tdd packages/repl/src/
 
 内置 Skill：`code-review`、`tdd`、`git-workflow`、`skill-creator`、`visual-review`。
 
-自定义 Skill 存放于 `~/.kodax/skills/`。Agent 可通过 `skill-creator` 为你构建新 Skill，并用 `/learn promote` 加入你的目录。
+自定义 Skill 存放于 `~/.kodax/skills/`。Agent 可通过 `skill-creator` 为你构建新 Skill。
 
 ---
 

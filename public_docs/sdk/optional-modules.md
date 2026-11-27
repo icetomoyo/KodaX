@@ -9,7 +9,6 @@ Use one when your app needs what it does. Install and ESM notes are in the
 | [Artifact SDK](#artifact-sdk) | `/artifacts`, `/artifacts/client`, `/artifacts/runtime`, `/artifacts/kodax` | Render documents and images and read the pixels as evidence |
 | [Sandbox](#standalone-sandbox) | `/sandbox` | Run your own commands inside the OS sandbox |
 | [Media input](#media-input) | `/media` | Attach images, files or videos to a prompt in your process |
-| [Skill learning](#background-skill-learning) | Host `learning.*` methods | Show and decide on the Skills KodaX learns |
 | [Legacy memory](#legacy-governed-memory) | `/experimental-memory` | Keep an app on the old memory API until it is removed |
 
 ## Artifact SDK
@@ -286,61 +285,6 @@ It validates first, then queues the input for that run. Pass
 fails when two runs are active rather than guess. This queue lives in your
 process only. A Host client sends follow-up input through the Host.
 
-## Background Skill learning
-
-After a root run ends, KodaX reviews the Session in the background. Besides
-memory notes (see [Memory](../configuration/memory.md)), the review can
-propose a Skill for a procedure that verifiably worked in that Session.
-
-- The review uses the Session's own provider and model, at most ten calls a
-  day. It does not run for CLI bridge providers.
-- If your process passes its own `learningReviewer` or `memoryReviewer` to
-  `runKodaX`, the built-in review does not run.
-- A proposed Skill starts as `ready`. It is not used until the person decides.
-- A correction or a failure is evidence for memory. On its own it never
-  changes a Skill.
-
-### Lifecycle and decisions
-
-A learned capability has a `lifecycle`: `opportunity`, `drafting`, `ready`,
-`testing`, `active_learned`, `promoted_user`, `quarantined`, `archived` or
-`rejected`. The person's decisions move it:
-
-| Decision | Effect |
-|---|---|
-| trust | Use it from now on, with no trial (`active_learned`). |
-| review | Put it on trial: the Host uses it a few times and watches how it fares (`testing`). |
-| reject, disable | Stop using it. |
-| rollback | Go back to the last good revision. |
-| promote | Make it one of the person's own Skills (`promoted_user`). |
-
-Whether a person has seen a change is kept per client, through
-`learning.acknowledge` and `learning.snooze`. The lifecycle is the same for
-every client.
-
-### Promotion
-
-Promotion copies one reviewed `ready` or `active_learned` revision into the
-person's Skills, normally `<data root>/skills/<slug>/SKILL.md`.
-
-- The source must still match the fingerprint recorded for that revision.
-- A file with the same content already there counts as success.
-- A different Skill already there fails with `action_failed` (over the Host,
-  `internal`) and is never overwritten.
-- `user` is the only scope.
-
-### Where to read and decide
-
-- A Host client uses the `learning.*` methods: `learning.list`,
-  `learning.get`, `learning.snapshot` for a badge, `learning.events`, and the
-  decisions above. See [Memory and learning](host-platform.md#memory-and-learning) and the
-  [Host protocol reference](host-protocol-reference.md).
-- In the terminal: `/learn`, `/learn trust <name>`, and
-  `/learn promote <name> --scope user`.
-
-Do not scan the learned files to decide what is active. A Skill is active only
-when its record says so and its file still matches.
-
 ## Legacy governed memory
 
 `/experimental-memory` is the API of the earlier governed memory. KodaX now
@@ -348,7 +292,7 @@ uses note memory by default (see [Memory](../configuration/memory.md)), and
 `KODAX_MEMORY_NOTES=0` brings the governed memory back. This entry stays only
 for that fallback and will be removed with it. Do not start new work on it.
 A Host client manages the person's memory with the Host's memory methods;
-see [Memory and learning](host-platform.md#memory-and-learning).
+see [Memory](host-platform.md#memory).
 
 ```ts
 import { createMemoryAgent, createMemoryControlPlane } from '@kodax-ai/kodax/experimental-memory';

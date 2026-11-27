@@ -7,6 +7,8 @@
 > Date: 2026-11-15
 >
 > Decision: [ADR-076](../ADR.md#adr-076-note-memory-replaces-the-governed-memory-plane).
+> Skill proposals were removed by FEATURE_309 ([ADR-085](../ADR.md#adr-085-kodax-no-longer-learns-skills-on-its-own-notes-carry-learned-procedures));
+> their checks moved to the [FEATURE_309 test guide](FEATURE_309_v0.8.11_TEST_GUIDE.md).
 > Design: [HLD §10](../HLD.md#10-note-memory), [DD §14](../DD.md#14-note-memory).
 
 ## 1. Test Goal
@@ -110,14 +112,6 @@ Expected: step 2 copies the memory into notes and writes
 `.legacy-converted.json`; the legacy files remain. Step 3 does not bring the
 note back. Step 4 uses the legacy memory and its `/memory` again.
 
-### Case H: Skill proposal
-
-Finish a session in which a multi-step release procedure was hard to get right
-and was confirmed by running it.
-
-Expected: `/learn ready` lists a proposed skill, which is not used until
-`/learn trust <name>`.
-
 ## 4. Evals
 
 Each paid runner refuses to start without its frozen `--confirm-budget`
@@ -127,7 +121,7 @@ string, which the error message prints. Read
 | Dataset | Measures | Result recorded in ADR-076 |
 |---|---|---|
 | `feature-308-baseline`, `feature-308-notes` | Read and write side against the legacy memory | Retrieval 0/12 to 12/12 among 40 notes |
-| `feature-308-reflect` | Reflection prompt and host checks, skill proposals | 77/78; hard procedure became a skill 5/6 |
+| `feature-308-reflect` | Reflection prompt and host checks | 77/78 (r4 scores notes only after FEATURE_309) |
 | `feature-308-replay` | Reflection on real local sessions (private, kept in the temp dir) | About half the notes useful |
 | `feature-308-twosession` | Write, reflect, then use in a second session | 19 mistakes to 0 |
 | `feature-308-inferred` | Whether inferred lessons should wait | Harm matched lift; keep candidates |

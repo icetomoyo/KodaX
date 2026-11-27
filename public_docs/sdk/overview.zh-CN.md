@@ -6,9 +6,9 @@
 | 指南 | 适合你，如果你 |
 |---|---|
 | [编写 Host 客户端](host-client.zh-CN.md) | 要写一个和 KodaX Host 通信的界面或工具：Node 应用、桌面应用或网页。 |
-| [平台后端](host-platform.zh-CN.md) | 要在 Host 旁边运行后端，出借密钥和工具、启动 Agent、管理记忆和学到的 Skill，或者对接 A2A、ACP。 |
+| [平台后端](host-platform.zh-CN.md) | 要在 Host 旁边运行后端，出借密钥和工具、启动 Agent、管理记忆，或者对接 A2A、ACP。 |
 | [在你的进程里运行 KodaX](in-process.zh-CN.md) | 要在自己的进程里把 Agent、会话、提示词、模型、MCP、Skill 或工作流当作库来调用。 |
-| [可选模块](optional-modules.zh-CN.md) | 需要文件渲染、独立沙箱、媒体输入、旧版记忆 API 或后台 Skill 学习。 |
+| [可选模块](optional-modules.zh-CN.md) | 需要文件渲染、独立沙箱、媒体输入或旧版记忆 API。 |
 | [Host 协议参考](host-protocol-reference.md) | 需要每个 v2 方法的参数和结果。 |
 
 要为别人运行 Host，见 [运行 KodaX Host](../deployment/host.zh-CN.md)。

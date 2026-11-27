@@ -5238,7 +5238,8 @@ Node 22 Ubuntu Unix-domain-socket daemon gate.
 ## ADR-052: Learned Capability Carriers — Memory for Facts, Skills for Methods, Extensions for Deterministic Capability, Workflows for Execution
 
 **Status**: Accepted (2026-07-12); automatic Extension-learning portion
-superseded (2026-07-29)
+superseded (2026-07-29); Skill decisions 3, 7 and 8 superseded by ADR-085
+(2026-11-27): KodaX no longer learns Skills on its own
 
 **Context**: F224 introduced one procedural-learning intake with Skill,
 Workflow, memory, reasoning, trace, and discard destinations. Later roadmap
@@ -5316,8 +5317,8 @@ rollback, and cache policy.
 
 ## ADR-053: One Learning Center, a Separate Learned Area, and Runtime-Owner Semantics
 
-**Status**: Accepted (2026-07-12); Extension-loop assumptions superseded
-(2026-07-29)
+**Status**: Superseded by ADR-085 (2026-11-27). Accepted (2026-07-12);
+Extension-loop assumptions superseded (2026-07-29)
 
 **Context**: F224 exposes a project Skill-proposal store and `/learn` commands;
 F260 adds Memory Agent evidence and F263 closes the Skill loop. An Extension
@@ -8040,7 +8041,8 @@ improved a task.
    days.
 8. **The Learning Center stays the skill store.** Reflection proposes a skill as
    `ready`, and it waits for the user. `runtime.learning` and its 13 methods are
-   unchanged. The canary is not used.
+   unchanged. The canary is not used. *Superseded by ADR-085 (2026-11-27):
+   reflection no longer proposes Skills, and the Learning Center is removed.*
 9. **After a failed tool batch, the next request carries a reminder** to read a
    note whose index line fits the failure. The reminder is not persisted in the
    transcript.
@@ -8624,3 +8626,106 @@ not read; removing the `-s` forms in 0.7.100 with `daemon`; renaming
 - The manual's command topics changed; `benchmark/manual-commands.eval.ts`
   (Layer 3, glm-5.3-flash and deepseek-flash) found 6 of 8 blind pairs better
   with the new manual and none worse; recommend-ship.
+
+---
+
+## ADR-085: KodaX No Longer Learns Skills on Its Own; Notes Carry Learned Procedures
+
+**Status**: Accepted (2026-11-27). Owner decision of 2026-11-26. Implemented by
+FEATURE_309 on `KodaX-next-dev` (`f16e977db`, `156d9dd9a`, `a5db2cef7`,
+`eb220ea29`). Supersedes ADR-053, the Skill parts of ADR-052 (decisions 3, 7
+and 8), and ADR-076 decision 8.
+
+### Context
+
+KodaX learned Skills in two places. Note reflection (ADR-076) could call
+`skill_propose`, which put a `ready` Skill into the Learning Center. The legacy
+episode reviewer asked for a Memory plan and a Skill decision in one call, and
+its Skills went through a three-use canary. The Learning Center behind them
+had nine lifecycle states, 13 `runtime.learning` methods, Host `learning.*`
+methods, `/learn`, an inbox and a status-bar summary. No eval had shown that a
+learned Skill helps a later task.
+
+Peers gave no evidence either way. Hermes writes Skills by default and spent
+June to November 2026 fixing its own loop (poisoned forks, a curator that
+archived live Skills, junk Skills), with no measure of later-task benefit.
+Codex v1 wrote Skills automatically and v2 dropped that for one short summary.
+pi never learned Skills.
+
+Three evals were run before the removal:
+
+- **Value** (`skill-value-r1`, 252 calls): a procedure stored as a learned
+  Skill against the same procedure stored as confirmed notes, on a later
+  session, for 2 simple and 3 complex procedures. Complex tier: 0 Skill wins,
+  1 note win, 53 ties. Both arms loaded what they stored 18/18. The eval has a
+  ceiling: notes made no mistake on any checkpoint, so it covers procedures of
+  about eight steps that the session spelled out and the user confirmed. When
+  the model wrote a Skill it often wrote no note; glm53flash wrote only a Skill
+  in all six complex chains, so under the approval gate those sessions would
+  have carried nothing forward.
+- **Capture** (`skill-capture-r1`, 72 calls): reflection on six realistic long
+  sessions, notes only against production with `skill_propose`. Facts in notes
+  81/90 against 80/90, blinded cell wins 7 against 7, equal noise, 15% fewer
+  output tokens. Twice a Skill took a procedure step out of the notes. This
+  was also the ADR-033 prompt eval for dropping the Skill paragraph: the
+  notes-only prompt ships unchanged.
+- **Reviewer** (`f309-reviewer-r2`, 64 calls, glm53flash and ds/flash): the
+  episode reviewer with Memory only against the old Memory-plus-Skill prompt.
+  Blind review recommend-ship. The new prompt kept the reusable method in
+  Memory 8/8 against 5/8, and saved nothing for a one-off task in 3/4 against
+  1/4. Pilot r1 used kimi, which wrote the forced call as text in both arms
+  because its adapter drops `tool_choice`; it was replaced.
+
+### Decision
+
+1. **KodaX does not create Skills on its own.** Reflection has only
+   `memory_reflect`. The episode reviewer returns a Memory plan only.
+2. **Notes carry learned procedures.** A confirmed procedure is a note like
+   any other lesson, and it reaches the model through the note index.
+3. **The Learning Center and its surfaces are removed**: `runtime.learning`,
+   `client.learning`, the Host `learning.*` methods, the `learning` view field,
+   the `learning:read` and `learning:control` scopes, the `learningCenter` and
+   `skillLearningLoop` capabilities, `/learn`, the learning inbox and status
+   summary, `/workflow pending` and `/skill pending`.
+4. **Learned Skills no longer load.** Skill discovery, the coding Run and the
+   SDK Runtime read only user, project, plugin and built-in Skills.
+5. **Approved learned Skills become user Skills once.** When a Host runtime
+   starts, each `active_learned` record is copied to
+   `<configHome>/skills/<slug>/SKILL.md`. An existing Skill is never
+   overwritten. A marker file makes later starts a no-op. `ready` and
+   `testing` records are not converted. Failures are diagnostics and never
+   block start. The `learned/` directory stays on disk, unread.
+6. **A user still makes Skills on purpose**, with `skill-creator` or by writing
+   a `SKILL.md`.
+
+### Alternatives rejected
+
+- **Keep learned Skills and redesign them** (a later session confirms them,
+  reflection sees existing Skills and patches before creating). The value eval
+  showed no gain to pay for that design, and the capture eval showed that a
+  Skill can pull steps out of the notes.
+- **Keep the Learning Center for hand-made proposals.** Nothing would feed it.
+- **Convert `ready` and `testing` records too.** Nobody approved them; making
+  them active would skip the user decision they were waiting for.
+- **Wait for the legacy memory deletion.** The Skill path could be removed on
+  its own, and every part of it was dead weight on each run.
+
+### Consequences
+
+- About 20k lines are gone net, including the eval datasets for the removed
+  paths (they stay in git at `cb62b61f0`).
+- A client of `runtime.learning`, `client.learning` or `learning.*` breaks;
+  `SDK_MIGRATION.md` lists the removal. A Host reports the removed methods as
+  unknown.
+- Persisted sessions that hold an old Skill decision still load: a stale
+  `capabilityDecision` is ignored and an old `skill` carrier finishes with no
+  effect.
+- The reviewer eval found two production bugs that dropped automatic Memory
+  writes (Issues 446 and 447); they were fixed in `21aba3993`. Evals of the
+  reviewer now score the governed-apply result, not the raw model output.
+- Open, not covered by the evals: long or branching procedures, many stored
+  items competing for attention, reworded tasks, and procedures that change
+  across sessions. A later eval of visible-but-marked candidates with
+  citations at use and a change log with rollback is planned. A procedure
+  that needs scripts may become a Skill only from confirmed notes, with
+  execution verified.

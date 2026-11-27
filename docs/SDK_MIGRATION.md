@@ -19,6 +19,7 @@ Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` �
 进程内入口不传 `events.beforeToolExecute` 时只运行只读工具，见[工具调用默认只读](#工具调用默认只读未发布)。
 直接调用 Host 协议的客户端从 v1 换到 v2 时见[协议 v2：v1 方法对照](#协议-v2v1-方法对照未发布)。
 调用 `kodax daemon …` 的脚本见 [`kodax host` 命令与健康状态](#kodax-host-命令与健康状态未发布)；解析其他 CLI 命令输出或检查退出码的脚本见 [CLI 输出、退出码与旧开关](#cli-输出退出码与旧开关未发布)。
+读写学到的 Skill（`runtime.learning`、`client.learning`、Host `learning.*`）的客户端见[自动 Skill 学习删除](#自动-skill-学习删除未发布)。
 
 ## 协议 v2：v1 方法对照（未发布）
 
@@ -46,8 +47,8 @@ Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` �
 | `ping` | `ping` |
 | `auth.renew` | 新增 |
 | `request.cancel` | `request.cancel` |
-| `view.subscribe` | `session.view.observe`、`session.observe`、`workflow.subscribe`、`learning.subscribe` |
-| `view.unsubscribe` | `session.view.close`、`subscription.close`、`workflow.unsubscribe`、`learning.unsubscribe` |
+| `view.subscribe` | `session.view.observe`、`session.observe`、`workflow.subscribe` |
+| `view.unsubscribe` | `session.view.close`、`subscription.close`、`workflow.unsubscribe` |
 
 **数据面：会话（所有角色）**
 
@@ -213,23 +214,7 @@ Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` �
 | `memory.approve` | `memory.approveProposal` |
 | `memory.forget` | `memory.forgetRef`、`memory.rejectProposal` |
 
-**技能学习（所有角色）**
-
-| v2 | v1 |
-|---|---|
-| `learning.list` | `learning.list` |
-| `learning.get` | `learning.get` |
-| `learning.snapshot` | `learning.snapshot` |
-| `learning.events` | `learning.events` |
-| `view.subscribe`（`target: {kind: 'host'}`） | `learning.subscribe`：Host 文档的 `learning` 键是 `learning.snapshot` 的计数，变了就推送；要看具体变化，再按 `afterRevision` 读 `learning.events` |
-| `learning.acknowledge` | `learning.acknowledge` |
-| `learning.snooze` | `learning.snooze` |
-| `learning.reject` | `learning.reject` |
-| `learning.disable` | `learning.disable` |
-| `learning.rollback` | `learning.rollback` |
-| `learning.review` | `learning.review` |
-| `learning.trust` | `learning.trust` |
-| `learning.promote` | `learning.promote` |
+**技能学习**：v1 和 v2 的 `learning.*` 都已删除，没有对应方法，见[自动 Skill 学习删除](#自动-skill-学习删除未发布)。
 
 **可信面（owner 和 service；永不进浏览器 SDK）**
 
@@ -297,6 +282,17 @@ Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` �
 - `kodax -s list|delete <id>|delete-all|cleanup-acp` 改为 `kodax sessions list|delete <id>|delete-all|cleanup-acp`。旧写法在 0.7.100 之前仍可用，会往 stderr 打一行提示；`kodax sessions list --json` 给脚本用。
 - `kodax execpolicy check --mode <profile>` 改为 `--permission-mode <profile>`；旧写法在命令行上从来没有生效过。
 - 不带子命令的 `kodax memory`、`kodax skill` 把帮助打到 stderr 并退出 1，和其他命令组一致。
+
+## 自动 Skill 学习删除（未发布）
+
+破坏性变更（ADR-085，FEATURE_309）。KodaX 不再自己学 Skill；会话里学到的流程存成记忆笔记。
+
+- 删除的 Host 方法：v1 和 v2 的全部 `learning.*`（`list`、`get`、`snapshot`、`events`、`subscribe`、`unsubscribe`、`acknowledge`、`snooze`、`reject`、`disable`、`rollback`、`review`、`trust`、`promote`）。调用它们按未知方法报错。
+- Host 视图文档不再有 `learning` 键；`learning:read`、`learning:control` scope 和 `learningCenter`、`skillLearningLoop` 能力不再出现在握手结果里。按能力判断的客户端隐藏学习入口即可。
+- 删除的 SDK 表面：`runtime.learning`、`client.learning`、`RuntimeLearningService`，以及 `@kodax-ai/agent` 里 Learning Center、提案、审批、Skill 治理、试用（canary）和学到的 Skill 运行时准入的导出。没有替代品。
+- 学到的 Skill 不再加载。Host 运行时启动时把每个已批准（`active_learned`）的学到的 Skill 复制成用户 Skill（`<configHome>/skills/<slug>/SKILL.md`），只做一次，不覆盖已有 Skill；`ready` 和 `testing` 的不转换。`learned/` 目录留在磁盘上，不再读取。
+- 记忆不变：记忆客户端继续用 `memory.*`。想把流程做成 Skill，让 Agent 用 `skill-creator`。
+- 已保存的会话照常加载：旧的 Skill 决定被忽略。
 
 ## 工具调用默认只读（未发布）
 

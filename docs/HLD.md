@@ -408,9 +408,6 @@ containment and Linux/macOS use one ASRT command wrapper per invocation. Legacy
 sensitive-root guards and pre-cutover execution-deny receipts are retired by
 setup-only upgrade reconciliation. Dynamic Windows `denyRead` is reported as
 unsupported before target start; POSIX keeps the ASRT policy field.
-Learned Skill discovery likewise treats local and remote project identities as
-distinct physical roots, searches each applicable root, and directs lifecycle
-mutations back to the store that owns the discovered record.
 
 Since v0.7.97 the Runtime streams events live in-process instead of owning a
 per-Session durable journal (the retired v0.7.85 design): events carry a
@@ -1093,11 +1090,11 @@ The write path has two entries:
   `candidate`, which the index leaves out.
 - **Reflection after the run.** When a root run ends, a background job sends
   the finished session to the same provider and model with one
-  `memory_reflect` tool and one `skill_propose` tool. The host validates every
-  operation against the session's user messages and local tool output, then
-  applies it. A candidate becomes active when a later session confirms its
-  way worked, or when the user approves it. A proposed skill is committed to
-  the Learning Center as `ready` and waits for the user.
+  `memory_reflect` tool. The host validates every operation against the
+  session's user messages and local tool output, then applies it. A candidate
+  becomes active when a later session confirms its way worked, or when the
+  user approves it. A learned procedure is a note too; KodaX does not create
+  Skills on its own (ADR-085).
 
 Notes directories are governed paths: file and shell tools may read them but
 not write them. A housekeeping pass after each reflection archives stale

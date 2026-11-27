@@ -7,9 +7,9 @@ Windows or Electron app must do. The other guides take it from there:
 | Guide | For you if you |
 |---|---|
 | [Build a client of a Host](host-client.md) | Write a UI or tool that talks to a KodaX Host: a Node app, a desktop app or a web page. |
-| [Platform backends](host-platform.md) | Run a backend next to a Host that lends keys and tools, starts agents, manages memory and learned Skills, or speaks A2A or ACP. |
+| [Platform backends](host-platform.md) | Run a backend next to a Host that lends keys and tools, starts agents, manages memory, or speaks A2A or ACP. |
 | [Run KodaX in your process](in-process.md) | Call the agent, sessions, prompts, models, MCP, Skills or workflows as libraries inside your own process. |
-| [Optional modules](optional-modules.md) | Need artifact rendering, the standalone sandbox, media input, the legacy memory API, or background Skill learning. |
+| [Optional modules](optional-modules.md) | Need artifact rendering, the standalone sandbox, media input, or the legacy memory API. |
 | [Host protocol reference](host-protocol-reference.md) | Need every v2 method with its params and result. |
 
 To run a Host for other people, see [Run a KodaX Host](../deployment/host.md).

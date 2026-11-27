@@ -714,18 +714,10 @@ host-owned structured `skillInvocation` provenance record, and its complete
 expanded content appears exactly once in the provider request. Slash text
 authored only by a model inside a child objective is not user authority.
 
-Background Skill learning is Memory-first and remains outside foreground Run
-latency. A single correction, failure, or verifier result is evidence rather
-than mutation authority. Only repeated independently verified evidence, or an
-explicit preserve-as-Skill request with verified terminal evidence, may create
-a low-risk immutable project-scoped testing revision. Discovery requires the
-canonical lifecycle/fingerprint record. Testing is bounded to one concurrent
-root binding and three exact-revision uses; project activation requires every
-bounded outcome to settle and at least one independently verified success.
-Protected/formal Skills, global promotion, and Extension authoring remain
-explicit user actions. Runtime hosts consume inventory,
-events, and controls through `runtime.learning`, not by inferring state from
-files.
+KodaX does not create Skills on its own (ADR-085). What a session learns,
+procedures included, is kept as memory notes, outside foreground Run latency.
+A user makes a Skill on purpose, with `skill-creator` or by writing a
+`SKILL.md`.
 
 Bidirectional A2A 1.0 is a root integration edge exposed through
 `@kodax-ai/kodax/a2a`. Outbound Agents must fail closed against advertised

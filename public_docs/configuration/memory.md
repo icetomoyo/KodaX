@@ -28,7 +28,7 @@ Secrets and credentials are never stored.
 
 ## Learning in the background
 
-After a session ends, KodaX reviews it in the background. It can save a correction you gave, confirm or dispute an existing note, and propose a skill for a procedure that verifiably worked. A proposed skill is not used until you trust it with `/learn trust <name>`.
+After a session ends, KodaX reviews it in the background. It can save a correction you gave, a procedure that verifiably worked, or confirm or dispute an existing note. It saves these as notes; KodaX does not create skills on its own. To turn a procedure into a skill, ask the agent to use `skill-creator`.
 
 The review makes at most ten model calls a day. It does not run for CLI bridge providers (such as Gemini CLI or Codex CLI). An embedding application that supplies its own learning reviewer turns it off.
 

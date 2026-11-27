@@ -8,7 +8,6 @@
 | [Artifact SDK](#artifact-sdk) | `/artifacts`、`/artifacts/client`、`/artifacts/runtime`、`/artifacts/kodax` | 渲染文档和图片，并把像素作为证据读出来 |
 | [沙箱](#独立沙箱) | `/sandbox` | 在操作系统沙箱里运行你自己的命令 |
 | [媒体输入](#媒体输入) | `/media` | 在你的进程里给提示词附上图片、文件或视频 |
-| [Skill 学习](#后台-skill-学习) | Host 的 `learning.*` 方法 | 展示 KodaX 学到的 Skill，并对它们做决定 |
 | [旧版记忆](#旧版受治理记忆) | `/experimental-memory` | 在旧记忆 API 删除之前，让应用继续使用它 |
 
 ## Artifact SDK
@@ -259,65 +258,13 @@ if (pasted) {
 `sessionId`；不传时，如果有两个运行处于活动状态，调用会失败，而不是去猜。这个
 队列只存在于你的进程里。Host 客户端通过 Host 发送追加输入。
 
-## 后台 Skill 学习
-
-根运行结束后，KodaX 会在后台回顾这个会话。除了记忆笔记（见
-[记忆](../configuration/memory.zh-CN.md)），回顾还可能为在该会话里经过验证确实
-有效的流程提议一个 Skill。
-
-- 回顾使用会话自己的提供商和模型，每天最多十次调用。它不会为 CLI 桥接提供商
-  运行。
-- 如果你的进程向 `runKodaX` 传入了自己的 `learningReviewer` 或
-  `memoryReviewer`，内置回顾就不会运行。
-- 提议的 Skill 一开始是 `ready`。在用户做出决定之前不会被使用。
-- 纠正或失败是记忆的证据。单凭它们永远不会修改 Skill。
-
-### 生命周期和决定
-
-学到的能力有一个 `lifecycle`：`opportunity`、`drafting`、`ready`、`testing`、
-`active_learned`、`promoted_user`、`quarantined`、`archived` 或 `rejected`。
-用户的决定推动它变化：
-
-| 决定 | 效果 |
-|---|---|
-| trust | 从现在起使用它，不经试用（`active_learned`）。 |
-| review | 让它试用：Host 用它几次，并观察效果（`testing`）。 |
-| reject、disable | 停止使用它。 |
-| rollback | 回到上一个良好的修订。 |
-| promote | 让它成为用户自己的 Skill（`promoted_user`）。 |
-
-用户是否看过某个变化按客户端分别记录，通过 `learning.acknowledge` 和
-`learning.snooze`。生命周期对所有客户端都一样。
-
-### 提升
-
-提升把一个已审阅的 `ready` 或 `active_learned` 修订复制到用户的 Skill 里，
-通常是 `<data root>/skills/<slug>/SKILL.md`。
-
-- 来源必须仍然匹配该修订记录的指纹。
-- 那里已有内容相同的文件，算作成功。
-- 那里已有不同的 Skill 时，以 `action_failed` 失败（经 Host 调用时为 `internal`），且从不覆盖。
-- `user` 是唯一的范围。
-
-### 在哪里查看和决定
-
-- Host 客户端使用 `learning.*` 方法：`learning.list`、`learning.get`、用于
-  角标的 `learning.snapshot`、`learning.events`，以及上面的各项决定。见
-  [记忆和学习](host-platform.zh-CN.md#记忆和学习) 和
-  [Host 协议参考](host-protocol-reference.md)。
-- 在终端里：`/learn`、`/learn trust <name>` 和
-  `/learn promote <name> --scope user`。
-
-不要扫描学到的文件来判断哪些处于活动状态。只有记录表明它处于活动状态、且它的
-文件仍然匹配时，Skill 才处于活动状态。
-
 ## 旧版受治理记忆
 
 `/experimental-memory` 是早先受治理记忆的 API。KodaX 现在默认使用笔记记忆
 （见 [记忆](../configuration/memory.zh-CN.md)），`KODAX_MEMORY_NOTES=0` 会切回
 受治理记忆。这个入口只为这种回退而保留，会和它一起删除。不要在它上面开始新
 工作。Host 客户端用 Host 的记忆方法管理用户的记忆；见
-[记忆和学习](host-platform.zh-CN.md#记忆和学习)。
+[记忆](host-platform.zh-CN.md#记忆)。
 
 ```ts
 import { createMemoryAgent, createMemoryControlPlane } from '@kodax-ai/kodax/experimental-memory';

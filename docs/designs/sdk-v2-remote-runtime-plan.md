@@ -2,6 +2,8 @@
 
 状态：第 4 版修订稿，2026-11-20。边界和 2026-11-14 定稿相同；规格改为按"规则、资源、传输"三层来写，并补上了方法表。用户 2026-11-20 要求按 §7 开始实现。M0 的代码和 ADR-079 已经写完，2026-11-22 在 `KodaX-next-dev` 上分层提交；各节里标"M0 已落地"的段落写的是实际行为。M1a 已经落地（含 REPL 跑在 v2 上），和 M0 一起提交：帧编解码、IPC 首帧区分、握手和 revision 协商、zod 方法定义和漂移测试、Node 无关的客户端核心已经写完并有测试，标"M1a 已落地"的段落写的是实际行为；方法表已有握手三项、只读目录三项（`provider.list`、`command.list`、`skill.list`）、会话七项（`session.list/get/create/archive/unarchive/delete/compact`）、视图三项（`view.subscribe`、`view.unsubscribe`、`item.read`，加上通知 `view.patch`、`view.reset`、`view.closed`；会话视图带这个 Session 的 Workflow）、输入与 Run 十项（`input.submit/get/withdraw`、`run.get/list/wait/stop/startTool/recover`、`session.cancel`）、交互与授权四项（`interaction.list/respond`、`permission.grant.list/revoke`）、设置两项（`session.settings.get/update`）、历史两项（`history.read`、`history.search`）、提升两项（`session.promote`、`session.promotion.get`）、记忆六项（`memory.list/get/create/update/approve/forget`）和技能学习十二项（`learning.*`，都见"记忆与技能学习"），其余按 §7 的顺序逐组加入。2026-11-21 合入了主线 beta.13（本地合并提交 `4b688c8b4`），主线登记的 FEATURE_312（稳定的历史 ID）和 FEATURE_313（Session 的恢复状态）要求先在这份方案里定规格，见"历史两项的落地细节"和"Session 的恢复状态"。FEATURE_312 已经落地。主线推迟了 FEATURE_313，用户决定连同恢复时限一起在 next-dev 上做；它也已经落地，见"Session 的恢复状态"末尾的落地细节。
 
+2026-11-27：FEATURE_309 删除了自动 Skill 学习（ADR-085），v1 和 v2 的 `learning.*`、Host 文档的 `learning` 键和 `RuntimeLearningService` 都已不存在。下文关于 `learning.*` 的条目只作历史记录。
+
 **这一版改了什么**
 
 - 2026-11-20 用户确认的三项（§11 第 11 条）：
@@ -939,8 +941,8 @@ blob.read({sessionId, blobId, cursor?}) -> {data, mediaType, byteLength, sha256,
 | `ping` ★ | 查 | `ping` | 兼作心跳 |
 | `auth.renew` | 命 | 新增 | M1b |
 | `request.cancel` ★ | 通知 | `request.cancel` | 取消带等待的查询。参数是 `id`（JSON-RPC 请求 id） |
-| `view.subscribe` ★ | 订 | `session.view.observe`、`session.observe`、`workflow.subscribe`、`learning.subscribe` | 一种机制。M1a 已落地 Session 视图这一种，视图里带这个 Session 的 Workflow |
-| `view.unsubscribe` ★ | 订 | `session.view.close`、`subscription.close`、`workflow.unsubscribe`、`learning.unsubscribe` | 不带 `requestId`，按订阅 ID 幂等。M1a 已落地 |
+| `view.subscribe` ★ | 订 | `session.view.observe`、`session.observe`、`workflow.subscribe` | 一种机制。M1a 已落地 Session 视图这一种，视图里带这个 Session 的 Workflow |
+| `view.unsubscribe` ★ | 订 | `session.view.close`、`subscription.close`、`workflow.unsubscribe` | 不带 `requestId`，按订阅 ID 幂等。M1a 已落地 |
 
 `request.ack` 删除（已核实）：
 

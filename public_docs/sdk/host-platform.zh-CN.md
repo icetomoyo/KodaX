@@ -9,7 +9,7 @@
 
 ## 谁能调用什么
 
-Host 把方法分成几个平面，每个角色能到达其中一部分。数据平面包括 Session、Run、历史、子 Agent、记忆和学习。设置平面包括这个人的配置、provider、MCP server 和扩展。受信平面包括租约、`session.policy.update`、`session.promote` 和下面列出的受信参数。本地平面管理 Host 本身和它所在机器上的路径。
+Host 把方法分成几个平面，每个角色能到达其中一部分。数据平面包括 Session、Run、历史、子 Agent 和记忆。设置平面包括这个人的配置、provider、MCP server 和扩展。受信平面包括租约、`session.policy.update`、`session.promote` 和下面列出的受信参数。本地平面管理 Host 本身和它所在机器上的路径。
 
 | 角色 | 怎么连接 | 能到达 |
 |---|---|---|
@@ -211,14 +211,13 @@ Run 可以停下来请求审批或等一个回答。Session 的 `interactions` �
 
 `allow_session` 和 `allow_always` 回答产生的授权，用 `permission.grant.list` 列出，用 `permission.grant.revoke` 收回；`service` 两个都能调用。Host 的安全日志把每次决定记为 `permission_decided`。
 
-## 记忆和学习
+## 记忆
 
-记忆是 Agent 关于这个人和项目记下的笔记。学习是 Host 从 Session 里学到的 Skill。两者都在数据平面，所以每个角色都能用。
+记忆是 Agent 关于这个人和项目记下的笔记。它在数据平面，所以每个角色都能用。
 
 - 记忆的方法是 `memory.list`、`get`、`create`、`update`、`approve` 和 `forget`。`scope` 是 `user`（跟着这个人进入每个项目）或 `project`（由 `project` 指定）。
 - Agent 推断出来的笔记是 `candidate`。只有 `active` 的笔记会被读进 Run。`memory.approve` 让笔记变成 active。forget 一条 candidate 就是拒绝它；forget 一条已经不在的笔记也算成功。
 - 看起来像 key 或 token 的笔记，报 `invalid_params`，reason 为 `secret_in_note`。
-- `learning.*` 记录这个人对每个学到的 Skill 做的决定。结果已经成立的决定直接成功，什么也不做。生命周期不允许的决定，报 `conflict`，reason 为 `invalid_transition`。
 
 ```ts
 const { note } = await host.call('memory.get', { scope: 'user', id: 'style' });
@@ -228,7 +227,7 @@ await host.call('memory.update', {
 });
 ```
 
-`ifRevision` 让修改只作用于你读到的那个版本。对记忆，它是笔记的 `revision`，一个字符串。对学习，它是能力的 `revision`，一个数字。期间被改过的，报 `conflict`，reason 为 `revision_mismatch`。重新读取，再做决定。
+`ifRevision` 让修改只作用于你读到的那个版本，即笔记的 `revision`，一个字符串。期间被改过的笔记，报 `conflict`，reason 为 `revision_mismatch`。重新读取，再做决定。
 
 ## 设置、MCP 和扩展
 

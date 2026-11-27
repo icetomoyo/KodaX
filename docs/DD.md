@@ -1708,35 +1708,19 @@ Core modules:
 - skill registry and resolver,
 - LLM expansion,
 - built-in skills copied during build,
-- `packages/agent/src/learning` for immutable learned revisions, canonical
-  lifecycle records, usage/outcome receipts, and Learning Center actions,
-- `packages/coding/src/memory/note-reflection-job.ts`, whose reflection pass
-  proposes skills as `ready` for the user to trust (DD §14). The canary
-  admission and `learning-reviewer.ts` serve only the legacy memory plane
-  until FEATURE_309.
+- `packages/agent/src/learning/learned-skill-driver.ts`:
+  `importApprovedLearnedSkills`, which a Host runtime calls at start to copy
+  each approved (`active_learned`) learned Skill into
+  `<configHome>/skills/<slug>/SKILL.md` once. It never overwrites a Skill,
+  only reads `learned/`, and writes `.learned-skills-imported.json` in the
+  Skills root so later starts do nothing. The rest of `learning/` serves only
+  the legacy memory plane until FEATURE_309 removes it.
+
+KodaX does not create Skills on its own (ADR-085). Learned Skills do not load:
+discovery reads user, project, plugin and built-in Skills only.
 
 The published `@kodax-ai/kodax/skills` subpath is a focused subset of agent
 capabilities. It should not require importing the full coding package.
-
-Learned Skill files are not self-authorizing. Runtime discovery requires a
-matching canonical record, project identity, lifecycle, fingerprint,
-regular-file checks, and formal-name policy. A testing revision permits one
-concurrent root binding and three exact-revision invocations. Project trust is
-established only after all three outcomes settle and at least one is an
-independently verified success. Credible negative evidence quarantines
-immediately; an exhausted canary without success returns the record to
-Ready/attention. The locked invocation mutation rechecks the current artifact
-revision and fingerprint before consuming a slot. Protected/formal
-changes, user-global promotion, and Extension authoring require explicit user
-authority through `runtime.learning` or `/learn`.
-
-Remote and local project IDs hash to different learned-area roots. Discovery
-opens each applicable store, applies remote-first precedence, and retains the
-record-to-store mapping for admission, invocation, outcome, reconciliation, and
-release. This includes `remote-hash:*` fallback. The public discovery config
-accepts both deprecated `expectedScope` and optional `expectedScopes`. Discovery
-pairs each physical root with exactly one expected scope, validates the pairing
-before scanning even an empty store, and never accepts a stale cross-root scope.
 
 Host-owned file mutation sinks keep their own namespace-integrity checks.
 Ordinary Agent Home descendants, including `agents/*.md`, Sessions, tool
@@ -1998,11 +1982,11 @@ atomically.
   `createNoteMemoryBinding` (passes the current user message for quote checks),
   `toolBatchFailed` and `noteFailureReminder`.
 - `memory/note-reflection.ts`: the reflection request (system prompt, current
-  notes, evidence, `memory_reflect` and `skill_propose`).
+  notes, evidence and `memory_reflect`).
 - `memory/note-reflection-job.ts`: `scheduleNoteRunFinish` (not awaited),
   `finishNoteRun` (count reads, reflect, organize both stores, prune
-  revisions), `createProviderJudge` and `createLearnedSkillSink`, which commits
-  a `ready` skill with `commitLearnedSkillRevision`.
+  revisions; it also reflects saved evidence that is still owed a pass) and
+  `createProviderJudge`.
 - `memory/note-work-queue.ts`: runs passes one at a time; the exit drain waits
   for it, so `kodax -p` finishes its writes.
 - `tools/memory.ts`: the `memory` tool, `mutates-state`, refused in plan mode,
