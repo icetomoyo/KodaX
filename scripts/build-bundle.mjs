@@ -423,6 +423,10 @@ writeFileSync(path.join(distDir, 'runtime-daemon-schema.json'), JSON.stringify(s
 log('Building dist/kodax_cli.js (CLI entry)…');
 const cliResult = await build({
   ...commonOptions,
+  // The CLI carries CJK UI text. The same strings take about half the bytes
+  // as UTF-8 instead of six-byte \uXXXX escapes, and the startup budget below
+  // counts bytes.
+  charset: 'utf8',
   metafile: true,
   entryPoints: [path.join(repoRoot, 'src/kodax_cli.ts')],
   external: [...external, './provider-auth-cli.js', './storage-repair-cli.js', './kodax_doctor.js', './one-shot-task.js', './history-turn.js', './client-history.js', './maintenance-scheduler.js', './acp_server.js', './integration-cli.js'],
