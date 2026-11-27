@@ -202,7 +202,9 @@ for (const scenario of ['recoverable', 'without-read', 'storage-failure',
         const message = JSON.parse(line); if (message.id === undefined) return;
         let result = {};
         if (message.method === 'initialize') result = { protocolVersion: '2025-11-25', capabilities: { tools: {} }, serverInfo: { name: 'mcp-output-fixture', version: '1' } };
-        if (message.method === 'tools/list') result = { tools: [{ name: 'huge', inputSchema: { type: 'object' } }] };
+        // Edits asks before an mcp_call unless the server declares the tool read-only (ADR-083);
+        // this fixture only returns text, and the Edits scenarios answer no permission prompt.
+        if (message.method === 'tools/list') result = { tools: [{ name: 'huge', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } }] };
         if (message.method === 'tools/call') {
           fs.appendFileSync(${JSON.stringify(callLog)}, 'called\\n');
           result = { content: [{ type: 'text', text: ${JSON.stringify(body)} }], structuredContent: { evidence: 'STRUCTURED_EVIDENCE' } };
