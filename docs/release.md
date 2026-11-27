@@ -139,14 +139,25 @@ fails `test:bundle` in seven CI jobs: the fixture tool now declares
 permissions, the Windows sandbox helper, writer lanes and temporal
 artifact evidence were brought up to date in the same change set.
 
-This release follows the single publishing dispatch described under
-[Current release execution](#current-release-execution): `target=all`
-with `release_tag=v0.7.97-rc.3` runs Full CI, all five archive builds
-and the npm package gates, then creates the tag at the dispatched
+The first publishing dispatch (run 45921442058 at `29db344f9`) failed its
+two attempts only on `test (node 22 fast)` and created no tag. Both
+attempts ran on a slower runner than rc.2 (the fast step took 652 s and
+702 s against 469 s; on the first attempt 53 heavy files unrelated to
+this test slowed by a median 1.38 times): `tests/first-turn-script-repo.test.ts`
+reached its 30-second test deadline in `charges relationship scan
+internals once under parent budget 4` (23.7 s in the rc.2 run) on both
+attempts, and in `projects the native contracts and preserves real
+overview, symbol and cycle evidence` on the second. The file and the
+repo-intelligence code are unchanged since rc.2; every other job passed on
+the first attempt, including `test (node 20 fast)` with the same test at
+24.5 s. A follow-up commit gives the file's real-process tests a
+60-second deadline, and the release is dispatched again from that commit
+with `target=all` and `release_tag=v0.7.97-rc.3`: Full CI, all five
+archive builds and the npm package gates, then the tag at the dispatched
 commit and the GitHub pre-release from that run's artifacts. Ordinary
-branch pushes do not run CI. Cross-platform manual acceptance,
-installed Space/SDK acceptance, the Space dependency bump and npm
-publication remain separate maintainer steps.
+branch pushes do not run CI. Cross-platform manual acceptance, installed
+Space/SDK acceptance, the Space dependency bump and npm publication remain
+separate maintainer steps.
 
 ## v0.7.97-rc.2 release preparation
 

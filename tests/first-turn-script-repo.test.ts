@@ -70,6 +70,9 @@ function stable(content: unknown): string {
     .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g, '<TIME>');
 }
 
+// Every test here runs real repo-intelligence worker processes. The slowest
+// need about 25 s on a standard runner and timed out at 30 s on a slower one,
+// so each gets 60 s; a hang still fails.
 it('projects the native contracts and preserves real overview, symbol and cycle evidence', async () => {
   const { root, ctx, budget, dispatch } = await fixture();
   dispatch.activeToolNames.push('undo', 'tool_call');
@@ -112,7 +115,7 @@ it('projects the native contracts and preserves real overview, symbol and cycle 
   expect(nativeBudget.spentBudget).toBe(names.length);
   expect(ctx.mutationTracker?.totalOps).toBe(0);
   expect(await readFile(path.join(root, 'packages/shared/src/index.ts'), 'utf8')).toContain('export class NameService');
-}, 30_000);
+}, 60_000);
 
 it('refreshes real overview and symbol snapshots without a separate discovery call', async () => {
   const { root, ctx, budget, dispatch } = await fixture();
@@ -133,7 +136,7 @@ it('refreshes real overview and symbol snapshots without a separate discovery ca
   const baseline = await executeTool('semantic_lookup', { query: 'FreshSymbol', kind: 'symbol' }, ctx);
   expect(stable(result.receipts[1]?.result.content)).toBe(stable(baseline));
   expect(budget.spentBudget).toBe(2);
-}, 30_000);
+}, 60_000);
 
 it.each([2, 4])('charges exactly %i admitted leaves, matching native work without double billing', async total => {
   const { ctx, budget, dispatch } = await fixture(total);
@@ -149,7 +152,7 @@ it.each([2, 4])('charges exactly %i admitted leaves, matching native work withou
   expect(result.receipts.at(-1)?.result.content).toContain('budget exhausted');
   expect(budget.spentBudget).toBe(total);
   expect(nativeBudget.spentBudget).toBe(total);
-}, 30_000);
+}, 60_000);
 
 it.each(names)('preserves native permission denial and subsequent read-only recovery for %s', async name => {
   const { budget, dispatch } = await fixture(1);
@@ -174,7 +177,7 @@ it.each(names)('preserves native permission denial and subsequent read-only reco
   expect(recovered.receipts[0]?.input).toEqual(input);
   expect(budget.spentBudget).toBe(1);
   expect(admitted).toHaveBeenCalledOnce();
-}, 30_000);
+}, 60_000);
 
 it('preserves admitted argument errors and recovers within the same cell', async () => {
   const { ctx, budget, dispatch } = await fixture(2);
@@ -189,7 +192,7 @@ it('preserves admitted argument errors and recovers within the same cell', async
   expect(result.receipts[0]?.input).toEqual({});
   expect(result.receipts[1]?.result.content).toContain('packages/shared/src/index.ts');
   expect(budget.spentBudget).toBe(2);
-}, 30_000);
+}, 60_000);
 
 it('preserves disabled-worker warnings instead of fabricating a successful empty analysis', async () => {
   const { ctx, budget, dispatch } = await fixture();
@@ -202,7 +205,7 @@ it('preserves disabled-worker warnings instead of fabricating a successful empty
     expect(result.receipts[0]?.result.content).not.toContain('No circular dependencies found.');
   }
   expect(budget.spentBudget).toBe(names.length - 1);
-}, 30_000);
+}, 60_000);
 
 it.each(['semantic_lookup', 'cyclic_dependencies'])('preserves %s warming feedback and permits recovery through the same worker path', async name => {
   const { ctx, budget, dispatch } = await fixture(2);
@@ -225,7 +228,7 @@ it.each(['semantic_lookup', 'cyclic_dependencies'])('preserves %s warming feedba
   expect(recovered.receipts[0]?.result.content).toContain(name === 'semantic_lookup' ? 'packages/shared/src/index.ts' : '1 cycle(s) found');
   expect(recovered.receipts[0]?.result.content).not.toContain('still warming');
   expect(budget.spentBudget).toBe(2);
-}, 30_000);
+}, 60_000);
 
 it('keeps native semantic result limits and all returned evidence in the guest and receipts', async () => {
   const { root, ctx, budget, dispatch } = await fixture();
@@ -241,7 +244,7 @@ it('keeps native semantic result limits and all returned evidence in the guest a
   expect(result.value).toEqual(result.receipts[0]?.result);
   expect(result.receipts[0]?.result.content).toContain('Narrow `query`, `kind`, or `target_path`');
   expect(budget.spentBudget).toBe(1);
-}, 30_000);
+}, 60_000);
 
 it.each(relations)('refreshes %s from changed source and returns complete native evidence', async name => {
   const { root, ctx, budget, dispatch } = await fixture(1);
@@ -259,7 +262,7 @@ it.each(relations)('refreshes %s from changed source and returns complete native
   expect(stable(result.receipts[0]?.result.content)).toBe(stable(baseline));
   expect(result.value).toEqual(result.receipts[0]?.result);
   expect(budget.spentBudget).toBe(1);
-}, 30_000);
+}, 60_000);
 
 it.each(relations)('preserves %s warming and unavailable recovery without hidden retries', async name => {
   const { ctx, budget, dispatch } = await fixture(2);
@@ -281,7 +284,7 @@ it.each(relations)('preserves %s warming and unavailable recovery without hidden
   expect(recovered.receipts[0]?.result.content).toContain('packages/app');
   expect(recovered.receipts[0]?.result.content).not.toContain('still warming');
   expect(budget.spentBudget).toBe(2);
-}, 30_000);
+}, 60_000);
 
 it.each([2, 4])('charges relationship scan internals once under parent budget %i', async total => {
   const { ctx, budget, dispatch } = await fixture(total);
@@ -296,7 +299,7 @@ it.each([2, 4])('charges relationship scan internals once under parent budget %i
   expect(result.receipts.at(-1)?.result.content).toContain('budget exhausted');
   expect(budget.spentBudget).toBe(total);
   expect(nativeBudget.spentBudget).toBe(total);
-}, 30_000);
+}, 60_000);
 
 it.each(relations.filter(name => name !== 'module_context'))('recovers from an admitted %s argument error in one cell', async name => {
   const { ctx, budget, dispatch } = await fixture(2);
@@ -311,7 +314,7 @@ it.each(relations.filter(name => name !== 'module_context'))('recovers from an a
   expect(result.receipts[0]?.input).toEqual({});
   expect(result.receipts[1]?.result.content).toContain('packages/app');
   expect(budget.spentBudget).toBe(2);
-}, 30_000);
+}, 60_000);
 
 it('pages the complete native overview by reference under a small transfer limit without replay', async () => {
   const { ctx, budget, dispatch } = await fixture();
@@ -379,7 +382,7 @@ it.each(names)('drains admitted %s work and preserves its result on cancellation
   expect(executing).toHaveBeenCalledTimes(2);
   expect(await pilot.run(`return await tools.${name}(${JSON.stringify(inputFor(name))});`, limits)).toMatchObject({ status: 'cancelled', receipts: [] });
   expect(budget.spentBudget).toBe(1);
-}, 30_000);
+}, 60_000);
 
 it('persists an overview-to-symbol-to-cycle investigation in one parent Run cell with three native-equivalent calls', async () => {
   const { root, ctx, budget } = await fixture(3);
@@ -415,4 +418,4 @@ it('persists an overview-to-symbol-to-cycle investigation in one parent Run cell
     name: 'cyclic_dependencies', input: {}, result: { content: baseline, isError: false },
   } });
   expect(records.at(-1)?.data).toMatchObject({ data: { status: 'completed', spentBudget: 3 } });
-}, 30_000);
+}, 60_000);
