@@ -49,6 +49,7 @@ import {
   getActiveAgentHomes,
   getAgentConfigHome,
   isCurrentProcessWindowsJobContained,
+  KodaXFileLockTimeoutError,
   killChildProcessTree,
   prepareInternalNodeLaunch,
   prepareJavaScriptChildLaunch,
@@ -101,12 +102,20 @@ import {
   repairWindowsSandboxControlDirectory,
   resolveWindowsAsrtRunnerArtifact,
   loadAuditedRuntimeProgram,
+  NativeArtifactRemovedError,
   trustedTextNativeArtifactStateRoots,
   verifyProtectedWindowsNativeArtifactImage,
   verifyWindowsSandboxControlDirectory,
   windowsNativeArtifactCacheRoot,
   windowsSandboxControlDirectory,
 } from './windows-native-artifacts.js';
+import {
+  openWindowsElevatedSession,
+  SandboxSetupError,
+  type SandboxSetupErrorCode,
+  type SandboxSetupPhase,
+  type WindowsElevatedSession,
+} from './windows-elevated-setup.js';
 
 export { rewriteWindowsGitSafeDirectoryArgv, windowsGitTrustRoots };
 
@@ -128,9 +137,7 @@ const {
   SandboxManager,
   getSrtWinPath,
   getWindowsSandboxUserStatus,
-  installWindowsSandbox,
   resolveSrtWin,
-  uninstallWindowsSandbox,
 } = await import('@anthropic-ai/sandbox-runtime');
 
 export interface SandboxRuntimeDoctorResult {
@@ -407,6 +414,8 @@ export interface SandboxSetupOutcome {
   readonly doctor: SandboxRuntimeDoctorResult;
   readonly guidance: readonly string[];
   readonly error?: string;
+  /** Present with `error`: a stable code for the failure. */
+  readonly code?: SandboxSetupErrorCode;
 }
 
 export interface KodaXSandboxCapability {
@@ -777,7 +786,6 @@ interface WindowsSandboxAclPoisonOwner {
 }
 
 let cachedWindowsBootIdentity: string | null | undefined;
-const WINDOWS_SANDBOX_ACL_RECOVERY_LOCK_TIMEOUT_MS = 35_000;
 const WINDOWS_SANDBOX_ACL_CLEANUP_DIAGNOSTIC = '[acl_cleanup_unconfirmed]';
 
 class WindowsSandboxAclAdmissionError extends Error {
@@ -838,6 +846,10 @@ function windowsSandboxV2SetupLockFile(): string {
 }
 
 const WINDOWS_SANDBOX_V2_CUTOVER_DIAGNOSTIC = '[windows_v2_acl_cutover_required]';
+const WINDOWS_SETUP_INTERRUPTED_DIAGNOSTIC = '[windows_setup_interrupted]';
+
+/** The marker still says "installing": a previous setup stopped part-way. */
+class WindowsSetupInterruptedMarkerError extends Error {}
 const WINDOWS_LEGACY_ACL_STATE_IGNORED_DIAGNOSTIC = '[legacy_acl_state_ignored]';
 const WINDOWS_SANDBOX_V2_CUTOVER_MARKER_MAX_BYTES = 1024 * 1024;
 const WINDOWS_SANDBOX_V2_SETUP_VERSION = 11 as const;
@@ -933,6 +945,7 @@ function parseWindowsSandboxV2CutoverMarker(text: string): WindowsSandboxV2Cutov
     throw new Error('the cutover marker is not an object');
   }
   const marker = parsed as Readonly<Record<string, unknown>>;
+  if (marker.state === 'installing') throw new WindowsSetupInterruptedMarkerError();
   const keys = Object.keys(marker).sort();
   if (
     keys.join(',') !== 'filesystemCapabilityNonce,generationNonce,hostUserSid,protocol,sandboxGroupSid,sandboxUserSid,setupReadRoots,version'
@@ -1075,6 +1088,16 @@ function parseWindowsLegacyAclCleanup(value: unknown): WindowsLegacyAclCleanup {
     filesystemCapabilityNonce: pending.filesystemCapabilityNonce };
 }
 
+function windowsSandboxV2MarkerReadError(error: unknown): Error {
+  if (error instanceof WindowsSetupInterruptedMarkerError) {
+    return new Error(
+      `${WINDOWS_SETUP_INTERRUPTED_DIAGNOSTIC} The previous sandbox setup was interrupted. `
+      + 'Run "kodax sandbox setup" again to finish it.',
+    );
+  }
+  return windowsSandboxV2CutoverError(`The recorded migration state is invalid: ${errorText(error)}`);
+}
+
 function windowsSandboxV2CutoverError(reason: string): Error {
   return new Error(
     `${WINDOWS_SANDBOX_V2_CUTOVER_DIAGNOSTIC} ${reason}. `
@@ -1089,7 +1112,7 @@ function assertWindowsSandboxV2Cutover(
   try {
     marker = readWindowsSandboxV2CutoverMarker();
   } catch (error: unknown) {
-    throw windowsSandboxV2CutoverError(`The recorded migration state is invalid: ${errorText(error)}`);
+    throw windowsSandboxV2MarkerReadError(error);
   }
   if (marker === undefined) {
     throw windowsSandboxV2CutoverError('The sandbox account has not completed the Windows v2 ACL cutover');
@@ -1124,7 +1147,7 @@ function currentWindowsSandboxV2Cutover(
   try {
     marker = readWindowsSandboxV2CutoverMarker();
   } catch (error: unknown) {
-    throw windowsSandboxV2CutoverError(`The recorded migration state is invalid: ${errorText(error)}`);
+    throw windowsSandboxV2MarkerReadError(error);
   }
   if (marker === undefined) {
     throw windowsSandboxV2CutoverError('The sandbox account has not completed the Windows v2 ACL cutover');
@@ -1592,26 +1615,29 @@ async function sandboxReadableWindowsHelper(groupSid: string | undefined): Promi
   }
 }
 
-async function windowsSandboxSidIsIdle(expectedSid: string): Promise<boolean> {
+/** Inconclusive inspection and a live process are different failures for the host. */
+async function requireWindowsSandboxSidIdle(expectedSid: string, busyMessage: string): Promise<void> {
+  let busy: boolean;
   try {
     const runner = requirePreparedWindowsRunner();
     const status = getWindowsSandboxUserStatus({ srtWin: runner.srtWin });
-    if (status.sid !== undefined && status.sid !== expectedSid) return false;
+    if (status.sid !== undefined && status.sid !== expectedSid) {
+      throw new Error(`the installed sandbox account ${status.sid} is not the expected account ${expectedSid}`);
+    }
     const nativeHelper = await sandboxReadableWindowsHelper(status.groupSid);
-    return !(await windowsSandboxSidHasOtherProcesses(expectedSid, {
+    busy = await windowsSandboxSidHasOtherProcesses(expectedSid, {
       executable: runner.srtWin.exe,
       prependArgs: runner.srtWin.prependArgs,
       ...(nativeHelper === undefined ? {} : { nativeHelper }),
-    }));
-  } catch (error: unknown) {
-    emitKodaXDiagnostic({
-      source: 'runtime:sandbox-setup',
-      level: 'warn',
-      message: 'Windows sandbox account process inspection failed; account rotation remains blocked.',
-      detail: error,
     });
-    return false;
+  } catch (error: unknown) {
+    throw new SandboxSetupError(
+      'idle_probe_failed',
+      `Windows sandbox account process inspection failed, so setup cannot prove the account is idle: ${errorText(error)}`,
+      { cause: error },
+    );
   }
+  if (busy) throw new SandboxSetupError('sandbox_account_busy', busyMessage);
 }
 
 async function recoverWindowsSandboxAcls(timeoutMs = 30_000): Promise<void> {
@@ -2109,14 +2135,79 @@ async function inspectSandboxRuntime(): Promise<SandboxRuntimeDoctorResult> {
   };
 }
 
-const INSTALL_WINDOWS_SETUP_CAPABILITIES = String.raw`
-$ErrorActionPreference = 'Stop'
-$process = Start-Process -FilePath $env:KODAX_NATIVE_SETUP_EXE -ArgumentList @('__setup-account-capabilities', $env:KODAX_NATIVE_SETUP_ENVELOPE) -Verb RunAs -PassThru -WindowStyle Hidden
-$process.WaitForExit()
-$exitCode = $process.ExitCode
-$process.Dispose()
-exit $exitCode
-`;
+const WINDOWS_SETUP_LOCK_WAIT_MS = 45 * 60_000;
+const WINDOWS_SETUP_ELEVATION_TIMEOUT_MS = 10 * 60_000;
+const WINDOWS_SETUP_STEP_TIMEOUT_MS = 5 * 60_000;
+const WINDOWS_SETUP_CAPABILITY_TIMEOUT_MS = 15 * 60_000;
+const SRT_WIN_SETUP_FAILURES: Readonly<Record<number, string>> = {
+  12: 'WFP filter install failed',
+  13: 'filters already exist with a different configuration',
+  14: 'sandbox user provisioning failed',
+};
+
+type WindowsElevatedSessionOpener = (
+  runner: PreparedWindowsSandboxRunner,
+  onPhase?: (phase: SandboxSetupPhase) => void,
+) => Promise<WindowsElevatedSession>;
+
+let openWindowsSetupSession: WindowsElevatedSessionOpener = (runner, onPhase) => (
+  openWindowsElevatedSession({
+    helper: { command: resolveWindowsSandboxV2Executable({ provision: true }).path },
+    srtWin: {
+      exe: runner.srtWin.exe,
+      prependArgs: runner.srtWin.prependArgs,
+      sha256: runner.sha256,
+    },
+    elevationTimeoutMs: WINDOWS_SETUP_ELEVATION_TIMEOUT_MS,
+    ...(onPhase === undefined ? {} : { onPhase }),
+  })
+);
+
+export function overrideWindowsElevatedSessionForTest(
+  opener: WindowsElevatedSessionOpener,
+): () => void {
+  const previous = openWindowsSetupSession;
+  openWindowsSetupSession = opener;
+  return () => {
+    openWindowsSetupSession = previous;
+  };
+}
+
+/** Opens the elevated session on first use, so one setup asks for consent at most once. */
+function lazyWindowsSetupElevation(
+  runner: PreparedWindowsSandboxRunner,
+  onPhase?: (phase: SandboxSetupPhase) => void,
+) {
+  let session: Promise<WindowsElevatedSession> | undefined;
+  return {
+    session: () => (session ??= openWindowsSetupSession(runner, onPhase)),
+    close: async (): Promise<void> => {
+      const opened = await session?.catch(() => undefined);
+      await opened?.close();
+    },
+  };
+}
+
+type WindowsSetupElevation = ReturnType<typeof lazyWindowsSetupElevation>;
+
+async function runElevatedSrtWin(
+  elevation: WindowsSetupElevation,
+  args: readonly string[],
+): Promise<void> {
+  const session = await elevation.session();
+  const reply = await session.request({ op: 'srt-win', args }, WINDOWS_SETUP_STEP_TIMEOUT_MS);
+  if (reply.exitCode === 0) return;
+  const reason = SRT_WIN_SETUP_FAILURES[reply.exitCode] ?? `exit ${reply.exitCode}`;
+  throw new SandboxSetupError(
+    'elevated_step_failed',
+    `srt-win ${args[0] ?? ''} failed (${reason}): ${reply.output}`,
+  );
+}
+
+function installWindowsSandboxElevated(elevation: WindowsSetupElevation): Promise<void> {
+  const [low, high] = KODAX_WINDOWS_PROXY_PORT_RANGE;
+  return runElevatedSrtWin(elevation, ['install', '--proxy-port-range', `${low}-${high}`, '--force']);
+}
 
 interface WindowsSetupCapabilityRequest {
   readonly aclExclusions: readonly string[];
@@ -2132,11 +2223,11 @@ interface WindowsSetupCapabilityRequest {
 }
 
 type WindowsSetupCapabilityInstaller = (
-  executable: string,
   request: WindowsSetupCapabilityRequest,
-) => void;
+  elevation: WindowsSetupElevation,
+) => Promise<void> | void;
 
-const installWindowsSetupCapabilities: WindowsSetupCapabilityInstaller = (executable, request) => {
+const installWindowsSetupCapabilities: WindowsSetupCapabilityInstaller = async (request, elevation) => {
   if (
     !/^S-1-5-21(?:-\d+)+$/i.test(request.sandboxSid)
     || !/^S-1-5-21(?:-\d+)+$/i.test(request.sandboxGroupSid)
@@ -2149,6 +2240,7 @@ const installWindowsSetupCapabilities: WindowsSetupCapabilityInstaller = (execut
   if (request.readRoots.length + request.writeRoots.length > 1_024) {
     throw new Error('Windows sandbox setup capability request exceeds 1024 roots.');
   }
+  const session = await elevation.session();
   const controlDirectory = verifyWindowsSandboxControlDirectory();
   const requestFile = path.join(
     controlDirectory,
@@ -2165,27 +2257,16 @@ const installWindowsSetupCapabilities: WindowsSetupCapabilityInstaller = (execut
     sha256: requestSha256,
   }), 'utf8').toString('base64');
   writeFileSync(requestFile, payload, { flag: 'wx', mode: 0o600 });
-  const powershell = path.join(
-    process.env.SystemRoot ?? String.raw`C:\Windows`,
-    'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe',
-  );
   try {
-    const result = spawnSync(powershell, [
-      '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-      '-EncodedCommand', Buffer.from(INSTALL_WINDOWS_SETUP_CAPABILITIES, 'utf16le').toString('base64'),
-    ], {
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        KODAX_NATIVE_SETUP_EXE: executable,
-        KODAX_NATIVE_SETUP_ENVELOPE: envelope,
-      },
-      shell: false,
-      windowsHide: true,
-    });
-    if (result.error !== undefined || result.status !== 0) {
-      const reason = result.error?.message ?? (result.stderr.trim() || `exit ${String(result.status)}`);
-      throw new Error(`Windows sandbox account capability setup failed: ${reason}`);
+    const reply = await session.request(
+      { op: 'account-capabilities', envelope },
+      WINDOWS_SETUP_CAPABILITY_TIMEOUT_MS,
+    );
+    if (reply.exitCode !== 0) {
+      throw new SandboxSetupError(
+        'elevated_step_failed',
+        `Windows sandbox account capability setup failed: ${reply.output || `exit ${reply.exitCode}`}`,
+      );
     }
   } finally {
     rmSync(requestFile, { force: true });
@@ -2204,16 +2285,16 @@ export function overrideWindowsSetupCapabilityInstallerForTest(
   };
 }
 
-function installWindowsV2AccountCapabilities(
+async function installWindowsV2AccountCapabilities(
+  elevation: WindowsSetupElevation,
   sandboxSid: string,
   sandboxGroupSid: string,
   filesystemCapabilityNonce: string,
   marker: WindowsSandboxV2CutoverMarker | WindowsSandboxV2InstallingMarker,
-): void {
+): Promise<void> {
   const home = path.resolve(process.env.USERPROFILE ?? os.homedir());
   const aclExclusions = windowsSandboxAclExclusions(home);
-  windowsSetupCapabilityInstaller(
-    resolveWindowsSandboxV2Executable({ provision: true }).path,
+  await windowsSetupCapabilityInstaller(
     {
       version: 2,
       sandboxSid,
@@ -2232,6 +2313,7 @@ function installWindowsV2AccountCapabilities(
       aclExclusions,
       ...('legacyAclCleanup' in marker ? { legacyAclCleanup: marker.legacyAclCleanup } : {}),
     },
+    elevation,
   );
 }
 
@@ -2289,17 +2371,51 @@ function verifyWindowsV2AccountCompatibility(
   }
 }
 
+/**
+ * `always` reinstalls a ready generation (explicit CLI setup). `when-launch-fails`
+ * rechecks a ready generation inside the lock, so a caller that queued behind a
+ * completed setup reuses it instead of asking for consent again.
+ */
+type WindowsSetupForce = 'never' | 'when-launch-fails' | 'always';
+
 async function setupWindowsSandboxRuntimeWithLock(
-  forceCurrentGeneration: boolean,
+  force: WindowsSetupForce,
+  onPhase?: (phase: SandboxSetupPhase) => void,
 ): Promise<SandboxRuntimeDoctorResult> {
   const initial = await doctorSandboxRuntime({ refresh: true });
-  if ((!forceCurrentGeneration && initial.ready) || (!initial.ready && !initial.setupRequired)) {
-    return initial;
+  if (!initial.ready && !initial.setupRequired) return initial;
+  if (initial.ready && force === 'never') return initial;
+  if (initial.ready && force === 'when-launch-fails') {
+    const executed = await doctorSandboxExecution({ refresh: true });
+    if (executed.ready) return executed;
   }
-  // Migration state lives in the protected native cache. Provision that cache
-  // before publishing a legacy drain marker; a normal mkdir would inherit a
-  // weaker parent DACL and make later artifact verification fail closed.
-  resolveWindowsSandboxV2Executable({ provision: true });
+  let runner: PreparedWindowsSandboxRunner;
+  try {
+    // Migration state lives in the protected native cache. Provision that cache
+    // before publishing a legacy drain marker; a normal mkdir would inherit a
+    // weaker parent DACL and make later artifact verification fail closed.
+    resolveWindowsSandboxV2Executable({ provision: true });
+    runner = await prepareWindowsSandboxRunner([], true);
+  } catch (error: unknown) {
+    throw new SandboxSetupError(
+      'native_artifact_unavailable',
+      `KodaX native sandbox components are unavailable: ${errorText(error)}`,
+      { cause: error },
+    );
+  }
+  const elevation = lazyWindowsSetupElevation(runner, onPhase);
+  try {
+    return await installWindowsSandboxGeneration(initial, runner, elevation);
+  } finally {
+    await elevation.close();
+  }
+}
+
+async function installWindowsSandboxGeneration(
+  initial: SandboxRuntimeDoctorResult,
+  runner: PreparedWindowsSandboxRunner,
+  elevation: WindowsSetupElevation,
+): Promise<SandboxRuntimeDoctorResult> {
   const filesystemCapabilityNonce = previousWindowsFilesystemCapabilityNonce() ?? randomUUID();
   let previousCutover: PreviousWindowsSandboxV2CutoverIdentity | undefined;
   let previousCutoverInvalid = false;
@@ -2316,9 +2432,11 @@ async function setupWindowsSandboxRuntimeWithLock(
   }
   const needsSshAclMigration = previousCutover !== undefined && previousCutover.version >= 10
     && (previousCutover.version < WINDOWS_SANDBOX_V2_SETUP_VERSION || previousCutover.installing);
-  if (needsSshAclMigration && previousCutover !== undefined
-    && !await windowsSandboxSidIsIdle(previousCutover.sandboxUserSid)) {
-    throw new Error('Windows sandbox SSH ACL migration requires idle sandbox processes; close sandboxed shells and retry "kodax sandbox setup".');
+  if (needsSshAclMigration && previousCutover !== undefined) {
+    await requireWindowsSandboxSidIdle(
+      previousCutover.sandboxUserSid,
+      'Windows sandbox SSH ACL migration requires idle sandbox processes; close sandboxed shells and retry "kodax sandbox setup".',
+    );
   }
   // Versioned setup owns migration. Retire legacy markers without placing a
   // hard-timeout delay in front of every upgrade; a healthy fixed account is
@@ -2326,7 +2444,6 @@ async function setupWindowsSandboxRuntimeWithLock(
   await retireLegacyWindowsSandboxCutoverForSetup();
   // Keep the old roots/nonce available if elevation is cancelled or cleanup fails.
   if (!needsSshAclMigration) await invalidateWindowsSandboxV2CutoverForSetup();
-  const runner = await prepareWindowsSandboxRunner([], true);
   const oldUser = getWindowsSandboxUserStatus({ srtWin: runner.srtWin });
   const oldSid = oldUser.sid;
   const accountIsHealthy = windowsSandboxAccountDiagnostics(oldUser).length === 0
@@ -2356,8 +2473,9 @@ async function setupWindowsSandboxRuntimeWithLock(
           + 'safely prove that no sandbox process still holds a control-state handle.',
         );
       }
-      if (oldSid !== undefined && !await windowsSandboxSidIsIdle(oldSid)) {
-        throw new Error(
+      if (oldSid !== undefined) {
+        await requireWindowsSandboxSidIdle(
+          oldSid,
           'The native shell control directory needs repair while the sandbox account still has '
           + 'a live process; close sandboxed shells and retry "kodax sandbox setup".',
         );
@@ -2379,20 +2497,14 @@ async function setupWindowsSandboxRuntimeWithLock(
       < WINDOWS_LEGACY_ACL_MIGRATION_VERSION
       && !windowsLegacyAclMigrationIsCurrent(oldUser.groupSid!);
     if (needsLegacyAclMigration) {
-      if (!await windowsSandboxSidIsIdle(oldUser.sid!)) {
-        throw new Error(
-          'Legacy Windows sandbox ACL migration requires the sandbox account to be idle; '
-          + 'close sandboxed shells and retry "kodax sandbox setup".',
-        );
-      }
+      await requireWindowsSandboxSidIdle(
+        oldUser.sid!,
+        'Legacy Windows sandbox ACL migration requires the sandbox account to be idle; '
+        + 'close sandboxed shells and retry "kodax sandbox setup".',
+      );
       migrateWindowsLegacyAclGuardsForSetup(oldUser.sid!, oldUser.groupSid!);
     }
-    const result = installWindowsSandbox({
-      srtWin: runner.srtWin,
-      proxyPortRange: KODAX_WINDOWS_PROXY_PORT_RANGE,
-      force: true,
-    });
-    if (result.cancelled) throw new Error('Sandbox setup was cancelled.');
+    await installWindowsSandboxElevated(elevation);
     const installedUser = getWindowsSandboxUserStatus({ srtWin: runner.srtWin });
     if (installedUser.sid === undefined || installedUser.groupSid === undefined) {
       throw new Error('Windows sandbox setup did not return complete account SIDs.');
@@ -2415,7 +2527,8 @@ async function setupWindowsSandboxRuntimeWithLock(
       setupReadRoots: windowsSandboxSetupReadRoots(),
     };
     const installingCutover = stageWindowsSandboxV2CutoverMarker(nextCutover, previousCutover);
-    installWindowsV2AccountCapabilities(
+    await installWindowsV2AccountCapabilities(
+      elevation,
       installedUser.sid,
       installedUser.groupSid,
       filesystemCapabilityNonce,
@@ -2426,8 +2539,9 @@ async function setupWindowsSandboxRuntimeWithLock(
     return doctorSandboxRuntime({ refresh: true });
   }
 
-  if (oldSid !== undefined && !await windowsSandboxSidIsIdle(oldSid)) {
-    throw new Error(
+  if (oldSid !== undefined) {
+    await requireWindowsSandboxSidIdle(
+      oldSid,
       'The Windows sandbox account still has a live process; '
       + 'close sandboxed shells and retry "kodax sandbox setup".',
     );
@@ -2443,16 +2557,10 @@ async function setupWindowsSandboxRuntimeWithLock(
       );
     }
     migrateWindowsLegacyAclGuardsForSetup(oldSid, oldUser.groupSid);
-    const uninstalled = uninstallWindowsSandbox({ keepUser: false, srtWin: runner.srtWin });
-    if (uninstalled.cancelled) throw new Error('Sandbox account rotation was cancelled.');
+    await runElevatedSrtWin(elevation, ['uninstall']);
   }
 
-  const result = installWindowsSandbox({
-    srtWin: runner.srtWin,
-    proxyPortRange: KODAX_WINDOWS_PROXY_PORT_RANGE,
-    force: true,
-  });
-  if (result.cancelled) throw new Error('Sandbox setup was cancelled.');
+  await installWindowsSandboxElevated(elevation);
   const installedUser = getWindowsSandboxUserStatus({ srtWin: runner.srtWin });
   const installedDiagnostics = windowsSandboxAccountDiagnostics(installedUser);
   if (installedDiagnostics.length > 0 || installedUser.sid === undefined || installedUser.groupSid === undefined) {
@@ -2476,7 +2584,8 @@ async function setupWindowsSandboxRuntimeWithLock(
     setupReadRoots: windowsSandboxSetupReadRoots(),
   };
   const installingCutover = stageWindowsSandboxV2CutoverMarker(nextCutover, previousCutover);
-  installWindowsV2AccountCapabilities(
+  await installWindowsV2AccountCapabilities(
+    elevation,
     installedUser.sid,
     installedUser.groupSid,
     filesystemCapabilityNonce,
@@ -2487,20 +2596,55 @@ async function setupWindowsSandboxRuntimeWithLock(
   return doctorSandboxRuntime({ refresh: true });
 }
 
+/**
+ * A caller that finds another setup running waits for it, then rechecks the
+ * finished state inside the lock. The wait outlasts one complete setup,
+ * including a slow UAC approval.
+ */
 async function runWindowsSandboxSetup(
-  forceCurrentGeneration: boolean,
+  force: WindowsSetupForce,
+  onPhase?: (phase: SandboxSetupPhase) => void,
 ): Promise<SandboxRuntimeDoctorResult> {
   await mkdir(path.dirname(windowsSandboxV2SetupLockFile()), { recursive: true, mode: 0o700 });
-  return withKodaXFileLock(
-    windowsSandboxV2SetupLockFile(),
-    () => setupWindowsSandboxRuntimeWithLock(forceCurrentGeneration),
-    WINDOWS_SANDBOX_ACL_RECOVERY_LOCK_TIMEOUT_MS,
-  );
+  const waiting = setTimeout(() => onPhase?.('waiting-for-other-setup'), 1_000);
+  try {
+    return await withKodaXFileLock(
+      windowsSandboxV2SetupLockFile(),
+      () => {
+        clearTimeout(waiting);
+        return setupWindowsSandboxRuntimeWithLock(force, onPhase);
+      },
+      WINDOWS_SETUP_LOCK_WAIT_MS,
+    );
+  } catch (error: unknown) {
+    if (error instanceof KodaXFileLockTimeoutError) {
+      throw new SandboxSetupError(
+        'setup_lock_busy',
+        `Another sandbox setup is still running after ${WINDOWS_SETUP_LOCK_WAIT_MS / 60_000} minutes.`,
+        { cause: error },
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(waiting);
+  }
 }
 
-export async function setupSandboxRuntime(): Promise<SandboxRuntimeDoctorResult> {
+/**
+ * Explicit setup: always reinstalls the current generation. Blocks until setup
+ * finishes, including the wait for UAC consent (up to 10 minutes).
+ */
+export async function setupSandboxRuntime(
+  options: { readonly onProgress?: (phase: SandboxSetupPhase) => void } = {},
+): Promise<SandboxRuntimeDoctorResult> {
   if (process.platform !== 'win32') return doctorSandboxRuntime({ refresh: true });
-  return runWindowsSandboxSetup(true);
+  return runWindowsSandboxSetup('always', options.onProgress);
+}
+
+function sandboxSetupErrorCode(error: unknown): SandboxSetupErrorCode {
+  if (error instanceof SandboxSetupError) return error.code;
+  if (error instanceof NativeArtifactRemovedError) return 'native_artifact_unavailable';
+  return 'setup_failed';
 }
 
 export function sandboxSetupGuidance(
@@ -2589,6 +2733,8 @@ export async function prepareSandboxRuntimeForSetup(
   options: {
     readonly allowElevation?: boolean;
     readonly initialDoctor?: SandboxRuntimeDoctorResult;
+    /** Setup blocks, including the wait for UAC consent; this reports where it is. */
+    readonly onProgress?: (phase: SandboxSetupPhase) => void;
   } = {},
 ): Promise<SandboxSetupOutcome> {
   const initial = options.initialDoctor ?? await doctorSandboxRuntime({ refresh: true });
@@ -2625,10 +2771,10 @@ export async function prepareSandboxRuntimeForSetup(
     };
   }
   try {
-    const forceCurrentGeneration = initial.diagnostics.some((diagnostic) => (
+    const launchFailed = initial.diagnostics.some((diagnostic) => (
       diagnostic.startsWith('Sandbox launch probe failed:')
     ));
-    await runWindowsSandboxSetup(forceCurrentGeneration);
+    await runWindowsSandboxSetup(launchFailed ? 'when-launch-fails' : 'never', options.onProgress);
     const doctor = await doctorSandboxExecution({ refresh: true });
     return {
       status: doctor.ready ? 'ready' : 'unavailable',
@@ -2638,13 +2784,14 @@ export async function prepareSandboxRuntimeForSetup(
     };
   } catch (error: unknown) {
     const doctor = await doctorSandboxRuntime({ refresh: true });
-    const message = errorText(error);
+    const code = sandboxSetupErrorCode(error);
     return {
-      status: /cancelled/i.test(message) ? 'cancelled' : 'unavailable',
+      status: code === 'elevation_cancelled' ? 'cancelled' : 'unavailable',
       attempted: true,
       doctor,
       guidance: sandboxSetupGuidance(doctor),
-      error: message,
+      error: errorText(error),
+      code,
     };
   }
 }

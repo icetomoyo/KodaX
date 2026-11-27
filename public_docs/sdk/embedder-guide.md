@@ -7015,12 +7015,42 @@ if (!doctor.ready) {
   showSandboxInfo(getKodaXSandboxSetupGuidance(doctor));
   // Call only from an explicit interactive setup/onboarding action. On Windows
   // this may display UAC; ordinary SDK calls never invoke it.
-  const activation = await activateKodaXSandbox();
+  const activation = await activateKodaXSandbox({
+    onProgress: (phase) => showSandboxProgress(phase),
+  });
   if (activation.status !== 'ready') {
-    showSandboxInfo(activation.guidance);
+    showSandboxInfo(activation.guidance, activation.code);
   }
 }
 ```
+
+Activation blocks until setup finishes. On Windows that includes the wait for
+UAC consent, up to 10 minutes, so call it from an async UI action and do not
+put a short timeout around it. `onProgress` reports where setup is:
+
+- `waiting-for-other-setup`: another caller is running setup. This caller
+  waits for it, up to 45 minutes, and then reuses its result.
+- `awaiting-elevation`: the UAC prompt is up. When your process is in the
+  background, Windows may only flash the prompt in the taskbar. Tell the user
+  to click it there.
+- `elevated`: consent was given, and setup is finishing.
+
+One setup asks for consent once, including when it replaces an old sandbox
+account. A failed activation carries `code` next to `error`:
+
+| Code | Meaning |
+|---|---|
+| `setup_lock_busy` | Another setup was still running after 45 minutes. |
+| `idle_probe_failed` | KodaX could not inspect the sandbox account's processes, so it cannot prove the account is idle. |
+| `sandbox_account_busy` | Sandboxed processes are still running. Close sandboxed shells and retry. |
+| `elevation_timeout` | The UAC prompt was not approved within 10 minutes. |
+| `elevation_cancelled` | The user dismissed the UAC prompt. `status` is `cancelled`. |
+| `elevated_step_failed` | An elevated step failed after consent; `error` has the step's output. |
+| `native_artifact_unavailable` | The KodaX native helper or the sandbox runner is missing, or security software removed it. |
+| `setup_failed` | Any other failure; read `error`. |
+
+If doctor reports `[windows_setup_interrupted]`, a previous setup stopped
+part-way. Running activation again finishes it.
 
 Platform behavior:
 

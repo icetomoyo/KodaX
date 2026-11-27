@@ -31,6 +31,8 @@ import {
   windowsSandboxControlDirectory,
 } from './windows-native-artifacts.js';
 import { resolveWindowsSandboxV2Executable } from './windows-sandbox-v2.js';
+import { SandboxSetupError, type WindowsElevatedRequest } from './windows-elevated-setup.js';
+import { installWindowsSandbox, uninstallWindowsSandbox } from '@anthropic-ai/sandbox-runtime';
 
 const capturedBrokerRequests = vi.hoisted(
   () => [] as Array<Readonly<Record<string, unknown>>>,
@@ -399,15 +401,6 @@ vi.mock('node:child_process', async (importOriginal) => {
             status: processIdentityMock.windowsBootIdentity === undefined ? 1 : 0,
             signal: null,
             stdout: processIdentityMock.windowsBootIdentity?.replace('windows-boot-', '') ?? '',
-            stderr: '',
-          };
-        }
-        if (script.includes('__setup-account-capabilities')) {
-          windowsSandboxMock.nullDeviceReady = true;
-          return {
-            status: 0,
-            signal: null,
-            stdout: '',
             stderr: '',
           };
         }
@@ -1314,6 +1307,7 @@ import {
   doctorSandboxExecution,
   doctorSandboxRuntime,
   isWindowsSandboxV2SetupCurrent,
+  overrideWindowsElevatedSessionForTest,
   overrideWindowsSandboxV2CutoverDirectoryForTest,
   overrideWindowsSetupCapabilityInstallerForTest,
   prepareSandboxRuntimeForSetup,
@@ -1603,6 +1597,10 @@ afterEach(async () => {
   windowsSandboxMock.uninstallOptions.length = 0;
   windowsSandboxMock.nextInstalledUserSid = undefined;
   windowsSandboxMock.nextInstalledGroupSid = undefined;
+  elevatedSessionMock.opens = 0;
+  elevatedSessionMock.closes = 0;
+  elevatedSessionMock.requests.length = 0;
+  elevatedSessionMock.openFailure = undefined;
   sandboxWrapper.mode = 'attest';
   vi.unstubAllEnvs();
   await Promise.all(tempRoots.splice(0).map((root) => rm(root, {
@@ -1612,6 +1610,40 @@ afterEach(async () => {
     retryDelay: 50,
   })));
 });
+
+const elevatedSessionMock = {
+  opens: 0,
+  closes: 0,
+  requests: [] as WindowsElevatedRequest[],
+  openFailure: undefined as Error | undefined,
+};
+
+// Stands in for the native one-consent session: it runs the mocked ASRT
+// install/uninstall and the account capability step in-process.
+overrideWindowsElevatedSessionForTest(async (_runner, onPhase) => {
+  elevatedSessionMock.opens += 1;
+  onPhase?.('awaiting-elevation');
+  if (elevatedSessionMock.openFailure !== undefined) throw elevatedSessionMock.openFailure;
+  onPhase?.('elevated');
+  return {
+    request: async (request) => {
+      elevatedSessionMock.requests.push(request);
+      if (request.op === 'account-capabilities') windowsSandboxMock.nullDeviceReady = true;
+      else if (request.args[0] === 'uninstall') uninstallWindowsSandbox({ keepUser: false });
+      else installWindowsSandbox({ force: true });
+      return { exitCode: 0, output: '' };
+    },
+    close: async () => {
+      elevatedSessionMock.closes += 1;
+    },
+  };
+});
+
+function elevatedSteps(): string[] {
+  return elevatedSessionMock.requests.map((request) => (
+    request.op === 'srt-win' ? request.args.join(' ') : request.op
+  ));
+}
 
 async function createRegistry(script = 'hello.mjs'): Promise<SkillRegistry> {
   const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-asrt-test-'));
@@ -2241,6 +2273,8 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     processTreeKillMock.synchronousNativeHostSpawnFailure = true;
     const doctor = await doctorSandboxExecution();
     expect(doctor).toMatchObject({ ready: false, setupRequired: true });
+    // Still failing when setup rechecks it inside the setup lock.
+    processTreeKillMock.synchronousNativeHostSpawnFailure = true;
 
     await expect(prepareSandboxRuntimeForSetup({ initialDoctor: doctor })).resolves.toMatchObject({
       status: 'ready',
@@ -2249,6 +2283,20 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
 
     expect(windowsSandboxMock.installCalls).toBe(1);
     expect(windowsSandboxMock.uninstallCalls).toBe(0);
+  });
+
+  it('reuses a launch that works again by the time setup holds the lock', async () => {
+    processTreeKillMock.synchronousNativeHostSpawnFailure = true;
+    const doctor = await doctorSandboxExecution();
+    expect(doctor).toMatchObject({ ready: false, setupRequired: true });
+
+    await expect(prepareSandboxRuntimeForSetup({ initialDoctor: doctor })).resolves.toMatchObject({
+      status: 'ready',
+      attempted: true,
+    });
+
+    expect(windowsSandboxMock.installCalls).toBe(0);
+    expect(elevatedSessionMock.opens).toBe(0);
   });
 
   it('fails doctor and shell admission before broker launch when the cutover marker is absent', async () => {
@@ -4394,7 +4442,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       readonly readRoots: readonly string[];
       readonly writeRoots: readonly string[];
     }> = [];
-    const restore = overrideWindowsSetupCapabilityInstallerForTest((_executable, request) => {
+    const restore = overrideWindowsSetupCapabilityInstallerForTest((request) => {
       const markerBytes = readFileSync(request.setupMarkerPath);
       expect(createHash('sha256').update(markerBytes).digest('hex'))
         .toBe(request.setupMarkerSha256);
@@ -4441,7 +4489,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     await rm(removedRoot);
     windowsSandboxMock.nullDeviceReady = false;
 
-    const restore = overrideWindowsSetupCapabilityInstallerForTest((_executable, request) => {
+    const restore = overrideWindowsSetupCapabilityInstallerForTest((request) => {
       const pending = JSON.parse(readFileSync(request.setupMarkerPath, 'utf8')) as {
         readonly setupReadRoots: readonly string[];
       };
@@ -4462,7 +4510,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     windowsSandboxMock.nullDeviceReady = false;
     windowsSandboxMock.sidProcessesActive = false;
     let pendingMarker: unknown;
-    const restore = overrideWindowsSetupCapabilityInstallerForTest((_executable, request) => {
+    const restore = overrideWindowsSetupCapabilityInstallerForTest((request) => {
       pendingMarker = JSON.parse(readFileSync(request.setupMarkerPath, 'utf8'));
       throw new Error('injected elevated setup failure');
     });
@@ -4492,7 +4540,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     const previous = JSON.parse(readFileSync(cutoverMarkerFile(), 'utf8')) as Record<string, unknown>;
     await writeFile(cutoverMarkerFile(), JSON.stringify({ ...previous, version: 10, setupReadRoots: [ssh] }));
     windowsSandboxMock.sidProcessesActive = false;
-    const restore = overrideWindowsSetupCapabilityInstallerForTest((_executable, request) => {
+    const restore = overrideWindowsSetupCapabilityInstallerForTest((request) => {
       expect(request.readRoots).not.toContain(ssh);
       expect(request.aclExclusions).toContain(ssh);
       expect(request.legacyAclCleanup).toMatchObject({
@@ -4520,7 +4568,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     await writeFile(cutoverMarkerFile(), JSON.stringify({ ...marker, state: 'installing', legacyAclCleanup }));
     windowsSandboxMock.sidProcessesActive = false;
     let attempts = 0;
-    const restore = overrideWindowsSetupCapabilityInstallerForTest((_executable, request) => {
+    const restore = overrideWindowsSetupCapabilityInstallerForTest((request) => {
       expect(request.legacyAclCleanup).toEqual(legacyAclCleanup);
       attempts += 1;
       if (attempts === 1) throw new Error('injected cleanup interruption');
@@ -4543,19 +4591,63 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     expect(outcome).toMatchObject({ status: 'ready', attempted: true });
     expect(windowsSandboxMock.installCalls).toBe(1);
     expect(windowsSandboxMock.uninstallCalls).toBe(0);
-    const setupSpawn = capturedSyncSpawns.find(({ args }) => {
-      const encodedIndex = args.indexOf('-EncodedCommand');
-      if (encodedIndex < 0) return false;
-      return Buffer.from(args[encodedIndex + 1] ?? '', 'base64')
-        .toString('utf16le')
-        .includes('__setup-account-capabilities');
-    });
-    expect(setupSpawn).toBeDefined();
-    const encodedIndex = setupSpawn?.args.indexOf('-EncodedCommand') ?? -1;
-    const setupScript = Buffer.from(setupSpawn?.args[encodedIndex + 1] ?? '', 'base64')
-      .toString('utf16le');
-    expect(setupScript).toContain('$process.WaitForExit()');
-    expect(setupScript).not.toMatch(/Start-Process[^\r\n]*\s-Wait(?:\s|$)/);
+    expect(elevatedSessionMock.opens).toBe(1);
+    expect(elevatedSessionMock.closes).toBe(1);
+    expect(elevatedSteps()).toEqual([
+      'install --proxy-port-range 60080-60143 --force',
+      'account-capabilities',
+    ]);
+  });
+
+  it('rotates an old sandbox account through a single elevated session', async () => {
+    const marker = JSON.parse(readFileSync(cutoverMarkerFile(), 'utf8')) as Record<string, unknown>;
+    await writeFile(cutoverMarkerFile(), JSON.stringify({ ...marker, sandboxUserSid: 'S-1-5-21-1999' }));
+    windowsSandboxMock.nullDeviceReady = false;
+    windowsSandboxMock.sidProcessesActive = false;
+    windowsSandboxMock.nextInstalledUserSid = 'S-1-5-21-2000';
+    const phases: string[] = [];
+
+    const outcome = await prepareSandboxRuntimeForSetup({ onProgress: (phase) => phases.push(phase) });
+
+    expect(outcome, JSON.stringify(outcome)).toMatchObject({ status: 'ready', attempted: true });
+    expect(windowsSandboxMock.user.sid).toBe('S-1-5-21-2000');
+    expect(elevatedSessionMock.opens).toBe(1);
+    expect(elevatedSteps()).toEqual([
+      'uninstall',
+      'install --proxy-port-range 60080-60143 --force',
+      'account-capabilities',
+    ]);
+    expect(phases).toEqual(['awaiting-elevation', 'elevated']);
+  });
+
+  it.each([
+    ['elevation_cancelled', 'cancelled'],
+    ['elevation_timeout', 'unavailable'],
+  ] as const)('returns %s when the UAC consent does not arrive', async (code, status) => {
+    windowsSandboxMock.nullDeviceReady = false;
+    elevatedSessionMock.openFailure = new SandboxSetupError(code, 'injected consent failure');
+
+    const outcome = await prepareSandboxRuntimeForSetup();
+
+    expect(outcome).toMatchObject({ status, attempted: true, code });
+    expect(windowsSandboxMock.installCalls).toBe(0);
+    expect(elevatedSessionMock.opens).toBe(1);
+  });
+
+  it('reports an interrupted setup instead of a corrupt marker, then finishes it', async () => {
+    const marker = JSON.parse(readFileSync(cutoverMarkerFile(), 'utf8')) as Record<string, unknown>;
+    await writeFile(cutoverMarkerFile(), JSON.stringify({ ...marker, state: 'installing' }));
+    windowsSandboxMock.sidProcessesActive = false;
+
+    const doctor = await doctorSandboxRuntime({ refresh: true });
+    expect(doctor).toMatchObject({ ready: false, setupRequired: true });
+    expect(doctor.diagnostics).toEqual(expect.arrayContaining([
+      expect.stringMatching(/^\[windows_setup_interrupted\] The previous sandbox setup was interrupted/),
+    ]));
+    expect(doctor.diagnostics.join(' ')).not.toContain('incompatible schema');
+
+    await expect(prepareSandboxRuntimeForSetup({ initialDoctor: doctor }))
+      .resolves.toMatchObject({ status: 'ready', attempted: true });
   });
 
   it('provisions a fresh native cache before first-account control setup', async () => {
@@ -4778,7 +4870,7 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
 
     const outcome = await prepareSandboxRuntimeForSetup();
 
-    expect(outcome).toMatchObject({ status: 'unavailable', attempted: true });
+    expect(outcome).toMatchObject({ status: 'unavailable', attempted: true, code: 'sandbox_account_busy' });
     if (outcome.status !== 'unavailable') throw new Error('expected migration to fail closed');
     expect(outcome.error).toContain('close sandboxed shells');
     expect(capturedSyncSpawns.filter(({ args }) => (
@@ -4905,6 +4997,7 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
 
     expect(windowsSandboxMock.installCalls).toBe(1);
     expect(windowsSandboxMock.uninstallCalls).toBe(0);
+    expect(elevatedSessionMock.opens).toBe(1);
   });
 
   it('fails Windows isolated Skill scripts before doctor or snapshot staging', async () => {
@@ -4957,6 +5050,17 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     });
     expect(windowsSandboxMock.uninstallCalls).toBe(0);
     await expect(stat(drainMarker)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('separates an inconclusive account process probe from a busy account', async () => {
+    await rm(cutoverMarkerFile(), { force: true });
+    windowsSandboxMock.sidInspectionFailure = 'injected probe failure';
+
+    const outcome = await prepareSandboxRuntimeForSetup();
+
+    expect(outcome).toMatchObject({ status: 'unavailable', attempted: true, code: 'idle_probe_failed' });
+    expect(outcome.error).toContain('injected probe failure');
+    expect(elevatedSessionMock.opens).toBe(0);
   });
 
   it('refuses an ambiguous missing-marker migration while the sandbox SID is active', async () => {

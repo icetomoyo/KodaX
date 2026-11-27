@@ -1303,9 +1303,18 @@ function configureSandboxCommands(program: Command, root?: Command): void {
           "KodaX sandbox setup will request one-time UAC approval; the terminal itself does not need Administrator mode.",
         );
       }
-      json(await prepareSandboxRuntimeForSetup({ initialDoctor: doctor }));
+      json(await prepareSandboxRuntimeForSetup({
+        initialDoctor: doctor,
+        onProgress: (phase) => stderr(SANDBOX_SETUP_PHASE_TEXT[phase]),
+      }));
     });
 }
+
+const SANDBOX_SETUP_PHASE_TEXT = {
+  "waiting-for-other-setup": "Another sandbox setup is running; waiting for it to finish.",
+  "awaiting-elevation": "Waiting for UAC approval (up to 10 minutes). If the prompt only flashes in the taskbar, click it there.",
+  elevated: "Approved; finishing sandbox setup.",
+} as const;
 
 export interface A2AServeDelegateInput {
   readonly homeDir?: string;

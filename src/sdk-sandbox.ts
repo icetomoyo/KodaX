@@ -28,3 +28,8 @@ export type {
   SandboxRuntimeDoctorResult as KodaXSandboxDoctorResult,
   SandboxSetupOutcome as KodaXSandboxSetupOutcome,
 } from './sandbox-runtime.js';
+
+export type {
+  SandboxSetupErrorCode as KodaXSandboxSetupErrorCode,
+  SandboxSetupPhase as KodaXSandboxSetupPhase,
+} from './windows-elevated-setup.js';

@@ -7,6 +7,8 @@ mod artifact_store;
 #[cfg(windows)]
 mod effect_job;
 #[cfg(windows)]
+mod elevated_setup;
+#[cfg(windows)]
 mod host;
 mod model;
 mod protocol;
@@ -270,6 +272,61 @@ fn verify_setup_marker_path(
     Ok(())
 }
 
+/// Grants the sandbox account its setup read capabilities. Runs elevated,
+/// either as its own process or inside an elevated setup session.
+#[cfg(windows)]
+pub(crate) fn setup_account_capabilities(encoded_envelope: &str) -> anyhow::Result<()> {
+    let envelope = decode_setup_account_capabilities_envelope(encoded_envelope)?;
+    let request_path = std::path::PathBuf::from(envelope.request_path);
+    verify_setup_account_capability_request_path(&request_path)?;
+    let bytes = host::read_and_retire_request_file(&request_path)?;
+    let request = decode_setup_account_capabilities_request(&bytes, &envelope.sha256)?;
+    verify_setup_marker_path(
+        &request_path,
+        std::path::Path::new(&request.setup_marker_path),
+    )?;
+    ensure!(
+        host::setup_installing_marker_is_current(
+            &request.setup_marker_path,
+            &request.setup_marker_sha256,
+            &request.filesystem_capability_nonce,
+            &request.sandbox_sid,
+            &request.sandbox_group_sid,
+        )?,
+        "Setup account capability marker is not current",
+    );
+    win::ensure_null_device_access(&request.sandbox_sid)?;
+    if let Some(legacy) = &request.legacy_acl_cleanup {
+        ensure!(
+            uuid::Uuid::parse_str(&legacy.filesystem_capability_nonce)?.get_version_num()
+                == 4,
+            "Invalid legacy filesystem capability nonce"
+        );
+        acl::remove_legacy_root_grants(
+            &legacy.roots,
+            &legacy.sandbox_group_sid,
+            &legacy.filesystem_capability_nonce,
+        )?;
+    }
+    acl::ensure_setup_acl_roots(
+        &acl::filter_acl_roots(&request.read_roots, &request.acl_exclusions),
+        &acl::filter_acl_roots(&request.write_roots, &request.acl_exclusions),
+        &request.sandbox_group_sid,
+        &request.filesystem_capability_nonce,
+    )?;
+    ensure!(
+        host::setup_installing_marker_is_current(
+            &request.setup_marker_path,
+            &request.setup_marker_sha256,
+            &request.filesystem_capability_nonce,
+            &request.sandbox_sid,
+            &request.sandbox_group_sid,
+        )?,
+        "Setup account capability marker changed during ACL preparation",
+    );
+    Ok(())
+}
+
 #[cfg(windows)]
 fn run() -> anyhow::Result<u32> {
     let mut args = std::env::args_os();
@@ -374,59 +431,13 @@ fn run() -> anyhow::Result<u32> {
             if args.next().is_some() {
                 anyhow::bail!("Account capability setup accepts one envelope");
             }
-            let envelope =
-                decode_setup_account_capabilities_envelope(envelope.to_str().ok_or_else(
-                    || anyhow::anyhow!("Setup account capability envelope is not Unicode"),
-                )?)?;
-            let request_path = std::path::PathBuf::from(envelope.request_path);
-            verify_setup_account_capability_request_path(&request_path)?;
-            let bytes = host::read_and_retire_request_file(&request_path)?;
-            let request = decode_setup_account_capabilities_request(&bytes, &envelope.sha256)?;
-            verify_setup_marker_path(
-                &request_path,
-                std::path::Path::new(&request.setup_marker_path),
-            )?;
-            ensure!(
-                host::setup_installing_marker_is_current(
-                    &request.setup_marker_path,
-                    &request.setup_marker_sha256,
-                    &request.filesystem_capability_nonce,
-                    &request.sandbox_sid,
-                    &request.sandbox_group_sid,
-                )?,
-                "Setup account capability marker is not current",
-            );
-            win::ensure_null_device_access(&request.sandbox_sid)?;
-            if let Some(legacy) = &request.legacy_acl_cleanup {
-                ensure!(
-                    uuid::Uuid::parse_str(&legacy.filesystem_capability_nonce)?.get_version_num()
-                        == 4,
-                    "Invalid legacy filesystem capability nonce"
-                );
-                acl::remove_legacy_root_grants(
-                    &legacy.roots,
-                    &legacy.sandbox_group_sid,
-                    &legacy.filesystem_capability_nonce,
-                )?;
-            }
-            acl::ensure_setup_acl_roots(
-                &acl::filter_acl_roots(&request.read_roots, &request.acl_exclusions),
-                &acl::filter_acl_roots(&request.write_roots, &request.acl_exclusions),
-                &request.sandbox_group_sid,
-                &request.filesystem_capability_nonce,
-            )?;
-            ensure!(
-                host::setup_installing_marker_is_current(
-                    &request.setup_marker_path,
-                    &request.setup_marker_sha256,
-                    &request.filesystem_capability_nonce,
-                    &request.sandbox_sid,
-                    &request.sandbox_group_sid,
-                )?,
-                "Setup account capability marker changed during ACL preparation",
-            );
+            setup_account_capabilities(envelope.to_str().ok_or_else(|| {
+                anyhow::anyhow!("Setup account capability envelope is not Unicode")
+            })?)?;
             Ok(0)
         }
+        "__elevated-setup" => elevated_setup::launch(args.collect()),
+        "__elevated-setup-session" => elevated_setup::serve(args.collect()),
         "__verify-account-capabilities" => {
             use std::io::Read;
             ensure!(

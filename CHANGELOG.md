@@ -6,6 +6,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Windows sandbox setup survives a UAC prompt that is approved late
+  (Issue 448). The whole setup asks for consent once, including when it
+  replaces an old sandbox account, which used to ask three times. The UAC
+  wait has its own 10-minute clock, separate from the setup steps, and a
+  prompt approved after that finds nothing to run.
+  `activateKodaXSandbox()` results carry a stable `code`:
+  `setup_lock_busy`, `idle_probe_failed`, `sandbox_account_busy`,
+  `elevation_timeout`, `elevation_cancelled`, `elevated_step_failed`,
+  `native_artifact_unavailable` or `setup_failed`. The new `onProgress`
+  option reports `waiting-for-other-setup`, `awaiting-elevation` and
+  `elevated`. A second caller waits for the running setup and reuses it
+  instead of failing after 35 s. An interrupted setup is reported as
+  `[windows_setup_interrupted]` instead of a corrupt marker.
+
 ---
 
 ## [0.7.97-rc.3] - 2026-11-27

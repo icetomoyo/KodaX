@@ -178,7 +178,9 @@ export type {
   KodaXSandboxNetworkPolicy,
   KodaXSandboxRunInput,
   KodaXSandboxRunResult,
+  KodaXSandboxSetupErrorCode,
   KodaXSandboxSetupOutcome,
+  KodaXSandboxSetupPhase,
 } from './sdk-sandbox.js';
 // ACP server API - server `cwd` can pin the session-level executionCwd for prompts and tools.
 export {

@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-11-25_
+_Last Updated: 2026-11-27_
 
 ---
 
@@ -46,6 +46,133 @@ This predates the child contract projection; the eval uses raw per-call usage,
 not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
+
+## Issue 448: Windows sandbox setup fails when UAC is approved late, and its failures have no codes
+
+- Priority: High
+- Status: Resolved (code); real-UAC acceptance on the customer machine pending
+- Introduced: Windows v2 sandbox setup
+- Created / Resolved: 2026-11-27 / 2026-11-27
+- Fixed: unreleased (after `v0.7.97-rc.3`)
+- Reported by: Space, from a Windows customer
+
+### Original Problem
+
+Space ran `activateKodaXSandbox()` from a background process. The UAC prompt
+only flashed in the taskbar, and setup failed before the user found it.
+
+- Each elevated step had its own clock that started before the UAC prompt
+  appeared. ASRT gave `srt-win uninstall` 15 s and `srt-win install` 60 s,
+  so a prompt approved later failed with a timeout. A prompt approved after
+  the timeout could still run an orphaned elevated uninstall.
+- Rotating an old sandbox account asked for consent three times: uninstall,
+  install, then the account capability step through PowerShell
+  `Start-Process -Verb RunAs`.
+- Failures were free text. A host could not tell a busy setup lock, a
+  failed idle probe, a busy sandbox account, a UAC timeout, a dismissed
+  prompt or a missing native helper apart. `cancelled` was guessed from the
+  word "cancelled" in the message.
+- A second caller waited 35 s for the setup lock and then failed, although
+  the embedder guide promised that callers converge. The waiting caller
+  then worked from a stale doctor result and could run setup again.
+- A setup interrupted part-way left the marker in its `installing` state.
+  Doctor reported it as "an incompatible schema or SID", as if the file
+  were corrupt.
+- The guide did not say that activation blocks until setup finishes.
+
+### Resolution
+
+- One consent for the whole setup. `kodax-windows-sandbox.exe
+  __elevated-setup` asks for UAC once and starts an elevated session. The
+  session connects back to a named pipe served by the calling process and
+  refuses a pipe served by any other process. Setup sends `srt-win
+  uninstall`, `srt-win install` and the account capability step over the
+  pipe. The session runs only those steps, with a fixed flag set. The
+  PowerShell `RunAs` script is gone.
+- The elevated session trusts only the runner hash built into the helper.
+  `scripts/build-native.mjs` passes the pinned ASRT runner's hash to the
+  build. The path and hash the caller passes are untrusted. Another program
+  on the desktop therefore cannot use the KodaX prompt to run its own
+  executable. A wrong hash is refused before the prompt. The session opens
+  the runner so that nobody can write, delete or rename it or its folders,
+  hashes that open file, and runs the resolved path while still holding it.
+  The file swap between the check and the start (Space review) is closed.
+- The UAC wait has its own clock: 10 minutes. Each step then has its own
+  limit: 5 minutes for `srt-win`, 15 minutes for account capabilities. A
+  prompt approved after the wait gave up finds no pipe, and the session
+  exits without doing anything.
+- `SandboxSetupOutcome.code` carries a stable code next to `error`:
+  `setup_lock_busy`, `idle_probe_failed`, `sandbox_account_busy`,
+  `elevation_timeout`, `elevation_cancelled`, `elevated_step_failed`,
+  `native_artifact_unavailable`, or `setup_failed` for anything else. The
+  `error` text starts with the code in brackets. `status: 'cancelled'`
+  now means exactly `elevation_cancelled`.
+- The idle probe reports an inconclusive inspection as `idle_probe_failed`,
+  not as a busy account.
+- A second caller waits up to 45 minutes for the running setup, then
+  re-reads the state inside the lock. A setup that finished in the meantime
+  is reused, and no second UAC prompt appears. A launch failure seen before
+  the wait is re-proved inside the lock before the generation is
+  reinstalled.
+- An interrupted setup is reported as `[windows_setup_interrupted] The
+  previous sandbox setup was interrupted. Run "kodax sandbox setup" again
+  to finish it.` Running setup again finishes it.
+- `activateKodaXSandbox({ onProgress })` and `setupKodaXSandbox({
+  onProgress })` report `waiting-for-other-setup`, `awaiting-elevation` and
+  `elevated`. `kodax sandbox setup` prints these phases on stderr. The
+  embedder guide documents the blocking call, the codes and the phases.
+
+Files changed:
+
+- Native: `native/windows-sandbox-v2/src/elevated_setup.rs` (new),
+  `main.rs` and `Cargo.toml`.
+- TypeScript: `src/windows-elevated-setup.ts` (new),
+  `src/sandbox-runtime.ts`, `src/sdk-sandbox.ts`, `src/index.ts` and
+  `src/integration-cli.ts`.
+
+Tests:
+
+- Rust `elevated_setup`: pipe name, runner hash and prefix validation; only
+  `install` with `--force`/`--proxy-port-range` and a bare `uninstall`
+  reach the runner; request decoding; output tail. Only the built-in runner
+  hash is accepted. While the runner is open it cannot be rewritten, renamed
+  or deleted, and its folder cannot be renamed.
+- `windows-elevated-setup.test.ts`, with a stand-in helper: all steps run
+  through one session, phases are reported, and each failure carries its
+  code (dismissed prompt, consent timeout, helper crash, missing helper,
+  step timeout).
+- `sandbox-runtime.test.ts`: account rotation runs uninstall, install and
+  capabilities in one session; consent failures return their codes; a busy
+  account and a failed probe are told apart; an interrupted marker gets its
+  own diagnostic and setup finishes it; a launch that works again by the
+  time setup holds the lock is reused without elevation.
+- Manual: the real helper's session entry talks to a Node pipe server,
+  refuses commands outside the allowed set, and exits without acting when
+  the pipe is gone. The real helper refuses a wrong runner hash before any
+  UAC prompt. It refuses another executable named with the pinned hash.
+
+Not covered:
+
+- A real UAC approval. The acceptance run needs a desktop: start setup from
+  a background process, wait at least 30 s, then approve the prompt in the
+  taskbar. With an old sandbox account it must show one prompt. See
+  `docs/test-guides/ISSUE_448_v0.7.97_REGRESSION_GUIDE.md`.
+- The 45-minute lock wait and the `setup_lock_busy` mapping have no
+  automated test.
+- The pipe server accepts the first client. A program running as the same
+  user could connect first and fake a successful reply. That gains no
+  rights: the readiness check after setup starts a real sandboxed process,
+  so the result is "not ready". Checking the client was declined. Node
+  cannot read the client PID, and a token on the command line is readable
+  by any program running as the same user.
+- The helper and the runner run elevated from the user's own profile, so a
+  program running as the same user can still replace them or plant a DLL
+  next to them before the prompt. The helper is not code-signed, so the
+  prompt shows an unknown publisher either way. Revisit this before signing
+  the helper: copy the runner to a folder only administrators can write.
+- A background process cannot bring the UAC prompt to the foreground.
+  Windows decides that; the host should tell the user to look in the
+  taskbar while the phase is `awaiting-elevation`.
 
 ## Issue 443: Windows Defender quarantines the sandbox helper that PowerShell writes into AppData
 
@@ -4828,6 +4955,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 448 | High | Resolved | Windows sandbox setup fails when UAC is approved late, and its failures have no codes | Windows v2 sandbox setup | unreleased (after `v0.7.97-rc.3`) | 2026-11-27 | 2026-11-27 |
 | 442 | Medium | Resolved | Gemini and pi-messages replay another model's tool calls as text | `v0.7.97-alpha.12` | unreleased (after `v0.7.97-rc.1`) | 2026-11-23 | 2026-11-23 |
 | 441 | High | Resolved | Replayed reasoning from another model becomes reply text, and models learn to write their thinking into the answer | `v0.7.97-alpha.12` | unreleased (after `v0.7.97-rc.1`) | 2026-11-23 | 2026-11-23 |
 | 437 | Low | Open | Per-session lock and review directories are never reclaimed | `v0.7.85` | - | 2026-11-22 | - |
@@ -20614,12 +20742,19 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 316 (47 Open including 1 needs-info, 1 ready, 267 Resolved, 0 Partially Resolved, 1 Won't Fix)
+- Total: 317 (47 Open including 1 needs-info, 1 ready, 268 Resolved, 0 Partially Resolved, 1 Won't Fix)
 - Ready: 1 (420)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-27: Issue 448
+
+- Windows sandbox setup asks for UAC once and waits up to 10 minutes for it,
+  separately from the setup steps. Failures carry stable codes, a second
+  caller waits for the running setup, and an interrupted setup has its own
+  diagnostic. Unreleased.
 
 ### 2026-11-23: Issue 442
 

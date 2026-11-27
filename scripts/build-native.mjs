@@ -28,11 +28,11 @@ if (usePrebuiltLinuxText && process.platform !== 'linux') {
   throw new Error('KODAX_NATIVE_PREBUILT is only valid for Linux native builds.');
 }
 
-function runCargo(crate, args) {
+function runCargo(crate, args, env = {}) {
   const cargo = process.env.CARGO || 'cargo';
   const result = spawnSync(cargo, args, {
     cwd: crate,
-    env: process.env,
+    env: { ...process.env, ...env },
     stdio: 'inherit',
     windowsHide: true,
   });
@@ -75,7 +75,11 @@ if (process.platform === 'win32') {
   if (targetArch !== process.arch) {
     throw new Error('Windows shell sandbox artifacts must be built on their target architecture.');
   }
-  runCargo(shellCrate, ['build', '--release', '--locked']);
+  // The elevated setup session trusts only this runner image, never the caller's hash.
+  const { asrtRunnerPath } = pinnedAsrtRunner(targetArch);
+  runCargo(shellCrate, ['build', '--release', '--locked'], {
+    KODAX_ASRT_RUNNER_SHA256: sha256(asrtRunnerPath),
+  });
 }
 
 const output = path.join(root, 'dist', 'native', `${process.platform}-${targetArch}`);
