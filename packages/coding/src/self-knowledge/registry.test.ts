@@ -247,6 +247,21 @@ describe('FEATURE_218 manual registry', () => {
     expect(troubleshooting).toContain('restore the file or allow that directory, then restart KodaX');
   });
 
+  it('documents the one-prompt sandbox setup, its phases and failure codes', () => {
+    const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
+    const troubleshooting = resolveKodaXManual({ topic: 'troubleshooting' }).content;
+
+    expect(sandbox).toContain('One setup shows one UAC prompt, even when it replaces an old sandbox account');
+    expect(sandbox).toContain('waits up to 10 minutes for it');
+    expect(sandbox).toContain('`[windows_setup_interrupted]` means a previous setup stopped part-way');
+    expect(sandbox).toContain('`activateKodaXSandbox` and `setupKodaXSandbox` block until setup finishes');
+    expect(sandbox).toContain('`onProgress` option reports `waiting-for-other-setup`, `awaiting-elevation`');
+    expect(sandbox).toContain('`elevated_step_failed`, `native_artifact_unavailable` or `setup_failed`');
+    expect(sandbox).toContain("`status: 'cancelled'`");
+    expect(troubleshooting).toContain("read the result's `code`");
+    expect(troubleshooting).toContain('`elevation_timeout`: the UAC prompt');
+  });
+
   it('documents per-fix writer lanes and temporal artifact evidence', () => {
     const agents = resolveKodaXManual({ topic: 'agents' }).content;
     const tools = resolveKodaXManual({ topic: 'tools' }).content;
