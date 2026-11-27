@@ -6,6 +6,28 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.97-rc.4] - 2026-11-28
+
+Fourth release candidate of the v0.7.97 line: the Windows sandbox setup
+consent repair (Issue 448). Windows sandbox setup asks for UAC consent once
+for the whole setup, including when it replaces an old sandbox account,
+which used to ask three times. The wait for the prompt has its own
+10-minute clock, separate from the setup steps, so a prompt that only
+flashes in the taskbar can still be approved; a prompt approved after that
+wait finds nothing to run. `activateKodaXSandbox()` results carry a stable
+`code`, the new `onProgress` option reports where setup is, a second caller
+waits for a running setup instead of failing after 35 s, and an interrupted
+setup is reported as `[windows_setup_interrupted]` instead of a corrupt
+marker. The elevated session runs only the sandbox runner whose hash is
+built into the native helper. Real-UAC acceptance on the customer machine
+remains pending. Every v0.7.96 stable and v0.7.97-alpha.1 through rc.3
+client contract is retained; `SandboxSetupOutcome` gains the optional
+`code`, and `/sandbox` exports the `KodaXSandboxSetupErrorCode` and
+`KodaXSandboxSetupPhase` types. npm publication remains a manual maintainer
+action.
+
 ### Fixed
 
 - Windows sandbox setup survives a UAC prompt that is approved late

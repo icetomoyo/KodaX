@@ -48,10 +48,112 @@ on one commit.
   The step limit is ten minutes because the passing Windows suite alone takes
   about 4.6 minutes.
 
+## v0.7.97-rc.4 release preparation
+
+Release state: `v0.7.97-rc.4` is a candidate awaiting the publishing
+dispatch. npm publication has not occurred. The candidate is the fourth
+release candidate of the v0.7.97 line: the Windows sandbox setup consent
+repair (Issue 448). `kodax-windows-sandbox.exe __elevated-setup` asks for
+UAC consent once and starts an elevated session that connects back to a
+named pipe served by the calling process; setup sends `srt-win uninstall`,
+`srt-win install` and the account capability step over that pipe, so
+replacing an old sandbox account shows one prompt instead of three and the
+PowerShell `RunAs` script is gone. The session trusts only the sandbox
+runner hash that `scripts/build-native.mjs` builds into the helper, opens
+the runner so that it cannot be replaced, and refuses a wrong hash before
+the prompt. The UAC wait has its own 10-minute clock; each step then has
+its own limit (5 minutes for `srt-win`, 15 minutes for account
+capabilities), and a prompt approved after the wait gave up finds no pipe
+and runs nothing. `SandboxSetupOutcome.code` is one of `setup_lock_busy`,
+`idle_probe_failed`, `sandbox_account_busy`, `elevation_timeout`,
+`elevation_cancelled`, `elevated_step_failed`,
+`native_artifact_unavailable` or `setup_failed`, and `status: 'cancelled'`
+means exactly `elevation_cancelled`. `activateKodaXSandbox({ onProgress })`
+and `setupKodaXSandbox({ onProgress })` report
+`waiting-for-other-setup`, `awaiting-elevation` and `elevated`, a second
+caller waits up to 45 minutes for a running setup and reuses it, and an
+interrupted setup is reported as `[windows_setup_interrupted]`. Real-UAC
+acceptance on the customer machine remains pending: the automated tests
+use a stand-in helper, and the acceptance steps are in the
+[Issue 448 regression guide](test-guides/ISSUE_448_v0.7.97_REGRESSION_GUIDE.md).
+Every v0.7.96 stable and v0.7.97-alpha.1 through rc.3 client contract is
+retained; `SandboxSetupOutcome` gains the optional `code`, and `/sandbox`
+exports the `KodaXSandboxSetupErrorCode` and `KodaXSandboxSetupPhase`
+types.
+
+The Issue 448 change put the CLI bundle 351 bytes past the audited
+5 MiB minus 49 KiB gate, so `build:bundle` failed at 5,193,055 bytes
+(rc.3 had 4,698 bytes of headroom) and `npm run build` failed in every job
+that runs it. The gate is unchanged and no behavior was trimmed: the CLI
+entry now builds with esbuild's `utf8` charset, so its non-ASCII
+characters (CJK UI text) are emitted as UTF-8 instead of six-byte
+`\uXXXX` escapes. The local CLI is 5,184,510 bytes, 8,194 bytes under the
+gate. The universal build in the npm package job carries all five native
+manifests and runs about 1 KiB larger (the rc.3 asset held a 5,189,018-byte
+CLI against 5,188,006 locally).
+
+The CI/Release in-place upgrade gates now pin the published
+`0.7.97-rc.3` tarball (published 2026-11-27T02:57:57.463Z; registry
+dist.integrity sha512-gNyTkhGT…Kn8A== packs to the same bytes as the
+kodax-ai-kodax-0.7.97-rc.3.tgz asset of the v0.7.97-rc.3 GitHub
+Release, sha256 7b44c56e…f7d5f93). Run that fixture locally with Windows
+`tar.exe` ahead of Git's GNU `tar` on `PATH`: GNU `tar` reads the `C:`
+drive in the archive path as a remote host.
+
+Local candidate validation on Windows with Node 22.23.1: full build
+(after the version bump, so `dist` carries 0.7.97-rc.4), source and
+test typechecks, the fast tier (3,817 passed, 60 skipped), `test:bundle`
+(110 passed under Node 22 and under Node 20), `npm run test:native` (149
+Rust tests, including the `elevated_setup` session tests), the installed
+Artifact SDK gate, `test:host-cutover` (3 passed), the real published rc.3
+Host in-place upgrade against the integrity-pinned public tarball (1
+passed), the Windows portable tier (3,207 passed, 35 skipped across both
+shards), the two Windows system shards (943 passed, 29 skipped), the
+complete system tier (1,790 passed, 29 skipped), the shell execution
+contract gate (303 passed, 2 skipped), the Runtime Session shell contract
+gate, and the packaged Electron job's steps that need neither Electron
+nor sandbox activation: concurrent Host startup and rebuild refresh, the
+SDK attachment run under CPU contention, the startup ownership and
+cancellation contracts (173 passed), the trusted text integration and
+the WFP probe regression. Under Node 20.20.2 the contract tier passed
+(1,059) and the unit tier had 14,226 passed and the same one local
+failure as rc.3, `read.test.ts` "reads a giant line and giant lookahead
+within a bounded child heap": tsx alone holds about 97 MB of live heap at
+startup on this workstation, above the test's 96 MB child limit. The
+session half of the elevated setup was exercised against the real helper
+without elevation: `__elevated-setup-session` connected to a local pipe
+server, refused `srt-win --version`, `srt-win uninstall --keep-user` and
+a malformed capability envelope, and exited cleanly on `exit`. Two load
+flakes appeared only while two full bundle suites ran side by side (a
+Host shutdown verification in `host-denied-ama` and an `ENOTEMPTY`
+repo-intelligence cache cleanup in `image-admission.test.ts`); both
+passed with one bundle suite per Node version.
+
+The win-x64 build job's archive gates were reproduced locally with the
+pinned bun 1.4.4: `kodax.exe --version` prints 0.7.97-rc.4, the archive
+carries every required sidecar, and the offline work-mode gate passed on
+that archive (15.9 s). The local binary is a single-manifest host build;
+the five-manifest universal build in Release CI is authoritative. The
+release commit also adds the Issue 443 row that the Issue Index lacked.
+
+This release follows the single publishing dispatch described under
+[Current release execution](#current-release-execution): `target=all`
+with `release_tag=v0.7.97-rc.4` runs Full CI, all five archive builds
+and the npm package gates, then creates the tag at the dispatched
+commit and the GitHub pre-release from that run's artifacts. Ordinary
+branch pushes do not run CI. Cross-platform manual acceptance, the
+real-UAC acceptance run, installed Space/SDK acceptance, the Space
+dependency bump and npm publication remain separate maintainer steps.
+
 ## v0.7.97-rc.3 release preparation
 
-Release state: `v0.7.97-rc.3` is a candidate awaiting the publishing
-dispatch. npm publication has not occurred. The candidate is the third
+Release state: `v0.7.97-rc.3` was published on 2026-11-27 as a GitHub
+prerelease from run 45926154024 at `0f394af5d` (every job green on that
+dispatch's first attempt: Full CI including the packaged Electron daemon
+job, all five archive builds and the npm package gates; 13 assets) and to
+npm on 2026-11-27T02:57:57Z (dist-tag `rc`). The universal npm tarball
+asset is `kodax-ai-kodax-0.7.97-rc.3.tgz`, sha256 `7b44c56e…f7d5f93`,
+matching `SHA256SUMS`. The candidate was the third
 release candidate of the v0.7.97 line: MCP detail on demand (ADR-083),
 the PowerShell-free Windows sandbox helper (Issue 443), one writer lane
 per independent fix (ADR-084), temporal artifact evidence (FEATURE_320)
@@ -91,9 +193,10 @@ client contract is retained; `ClientMcpServerConfig` gains the optional
 `enabledTools` and `disabledTools`, and `CapabilityProvider.execute`
 gains an optional options argument that carries `signal`.
 
-The CI/Release in-place upgrade gates now pin the published
-`0.7.97-rc.2` tarball (published 2026-11-23T15:05:11.186Z; registry
-dist.integrity sha512-Ix50r+zx…Op8Q== packs to the same bytes as the
+The CI/Release in-place upgrade gates pinned the published
+`0.7.97-rc.2` tarball for this candidate (published
+2026-11-23T15:05:11.186Z; registry dist.integrity
+sha512-Ix50r+zx…Op8Q== packs to the same bytes as the
 kodax-ai-kodax-0.7.97-rc.2.tgz asset of the v0.7.97-rc.2 GitHub
 Release, sha256 5b7e96bf…1bab2e1). Run that fixture locally with Windows
 `tar.exe` ahead of Git's GNU `tar` on `PATH`: GNU `tar` reads the `C:`
@@ -150,14 +253,12 @@ attempts, and in `projects the native contracts and preserves real
 overview, symbol and cycle evidence` on the second. The file and the
 repo-intelligence code are unchanged since rc.2; every other job passed on
 the first attempt, including `test (node 20 fast)` with the same test at
-24.5 s. A follow-up commit gives the file's real-process tests a
-60-second deadline, and the release is dispatched again from that commit
-with `target=all` and `release_tag=v0.7.97-rc.3`: Full CI, all five
-archive builds and the npm package gates, then the tag at the dispatched
-commit and the GitHub pre-release from that run's artifacts. Ordinary
-branch pushes do not run CI. Cross-platform manual acceptance, installed
-Space/SDK acceptance, the Space dependency bump and npm publication remain
-separate maintainer steps.
+24.5 s. `0f394af5d` gives the file's real-process tests a 60-second
+deadline. The second dispatch (run 45926154024 at `0f394af5d`, again
+with `target=all` and `release_tag=v0.7.97-rc.3`) passed every job on its
+first attempt and published. Ordinary branch pushes do not run CI.
+Cross-platform manual acceptance, installed Space/SDK acceptance and the
+Space dependency bump remain separate maintainer steps.
 
 ## v0.7.97-rc.2 release preparation
 

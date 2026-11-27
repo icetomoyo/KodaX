@@ -1,10 +1,12 @@
 # KodaX SDK — Product Client and Host Integration
 
 This page describes the current FEATURE_298/299/301/303/304/305/306 development tree, checked against
-package version `0.7.97-rc.3`. The version alone does not claim that all current
+package version `0.7.97-rc.4`. The version alone does not claim that all current
 working-tree changes are already published to npm. Check the installed
 package exports and the connected Host's capabilities when migrating.
-The rc.3 MCP detail on demand (ADR-083), the PowerShell-free Windows sandbox
+The rc.4 Windows sandbox setup consent repair (Issue 448: blocking
+activation with progress phases and failure codes, documented below) and the rc.3
+MCP detail on demand (ADR-083), the PowerShell-free Windows sandbox
 helper (Issue 443), per-fix writer lanes (ADR-084) and temporal artifact
 evidence (FEATURE_320) are current, as are the rc.2 RepoIntel phase 0 default
 surface (`repo_overview`, `changed_scope`

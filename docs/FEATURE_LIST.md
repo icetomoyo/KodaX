@@ -11,16 +11,16 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.97-rc.3` (Git tag); `v0.7.96` remains the last stable release |
-| Current package version | `@kodax-ai/kodax@0.7.97-rc.3`; npm `rc` is `0.7.97-rc.2` (published 2026-11-23T15:05:11Z); rc.3 npm publication remains a manual maintainer step |
+| Current released version | `v0.7.97-rc.4` (Git tag); `v0.7.96` remains the last stable release |
+| Current package version | `@kodax-ai/kodax@0.7.97-rc.4`; npm `rc` is `0.7.97-rc.3` (published 2026-11-27T02:57:57Z); rc.4 npm publication remains a manual maintainer step |
 | Workspace baseline | `llm / agent / coding / repl` 4 core packages + private optional `artifacts` source workspace; one public npm package |
 | Released implementation | [FEATURE_301 v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) — managed Artifact SDK and PPT review loop, released in `v0.7.97-alpha.4` and extended with the unified Artifact SDK in `v0.7.97-alpha.5`; [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3` and extended with startup streamlining, Session recency ordering, draft admission, concurrent-launch recovery and shared-Session Host ownership resolution through `v0.7.97-alpha.7`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
 | Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement released in alpha.4; missing visual capabilities remain unverified; [design](ADR.md#verification-responsibility-and-tradeoffs) |
 | Artifact distribution revision | `2026-10-18` — one `@kodax-ai/kodax` npm package; four `/artifacts` subpaths and resources staged in the main tarball; local implementation, not yet published |
 | Current Artifact SDK additions | Unified visual evidence SDK and format backends released in `v0.7.97-alpha.5`: nine public operations, PDF/image/SVG/DOCX evidence, local HTML/SMIL capture and same-Host PNG reads; [support and limits](ARTIFACT_SDK.md) |
-| Current development | `v0.7.97-rc.3` MCP detail on demand, the PowerShell-free Windows sandbox helper, per-fix writer lanes and temporal artifact evidence — `mcp_search` rows carry an argument signature, `mcp_describe` accepts up to 10 ids, a call rejected for its arguments returns the tool's input schema, and each MCP server line can carry a cached one-line purpose (ADR-083); `mcp_call` follows the target tool's annotations, so Plan and Edits run tools marked `readOnlyHint` that are not destructive while Edits asks before any other MCP tool, a Session grant binds the MCP tool id rather than its arguments, and a failed read-only built-in names a same-named MCP tool in its error without running it (CAP-025); server configs accept `enabledTools`/`disabledTools` and tool calls default to a 300-second timeout restarted by server progress; Windows provisions and supervises its sandbox helpers through the native helper instead of PowerShell, and a helper that security software removes fails with the non-retryable `native_artifact_removed_after_provision` (Issue 443); a request listing several independent fixes dispatches one writer lane per fix (ADR-084); temporal `artifact_capture` samples GIF, animated WebP and MP4/MOV/WebM video at the requested seconds (FEATURE_320); memory keeps tool outcome ids unique when a provider reuses a tool call id; [release preparation](release.md#v0797-rc3-release-preparation). On top of the rc.2 RepoIntel phase 0, reasoning-replay repairs and the `glm-5.4` listing. Cross-platform manual acceptance, installed Space/SDK acceptance, the Space dependency bump and the original slow first resume after rebuild remain open; Issue 395's intermittent failure cause and Issue 394's whole-task non-inferiority remain unproven. |
+| Current development | `v0.7.97-rc.4` Windows sandbox setup consent repair — one UAC prompt for the whole setup, including when it replaces an old sandbox account; the consent wait has its own 10-minute clock and a prompt approved after it runs nothing; `activateKodaXSandbox()` results carry a stable `code` and `onProgress` reports `waiting-for-other-setup`, `awaiting-elevation` and `elevated`; a second caller waits for a running setup and reuses it; an interrupted setup is reported as `[windows_setup_interrupted]`; the elevated session trusts only the sandbox runner hash built into the native helper (Issue 448; real-UAC acceptance pending); the CLI entry builds with the `utf8` charset to stay under the unchanged 5 MiB minus 49 KiB gate; [release preparation](release.md#v0797-rc4-release-preparation). On top of the rc.3 MCP detail on demand, PowerShell-free Windows sandbox helper, per-fix writer lanes and temporal artifact evidence. Cross-platform manual acceptance, installed Space/SDK acceptance, the Space dependency bump and the original slow first resume after rebuild remain open; Issue 395's intermittent failure cause and Issue 394's whole-task non-inferiority remain unproven. |
 | Visual harness implementation | P3/P4/P5/P6 implemented within declared scope and released in `v0.7.97-beta.5` through the next-dev integration; [final ID/receipt contract delivery](designs/visual-harness-id-contract-delivery-2026-10-30.md). P7 task-value evaluation concluded **mixed; net task-quality/token value unproven**, against optimized pre-visual 1826cc22; [final review and limits](designs/visual-harness-current-version-closure-2026-10-30.md). The 2026-10-29 plan's "not executed" state and old r3 single-response results are historical, not the current outcome. Historical default suite 18,094 passed / 0 failed; earlier failures and unlocated causes remain recorded; [mainline integration acceptance](designs/next-dev-integration-execution-2026-11-09.md). No new feature ID/version assigned |
-| Roadmap updated | `2026-11-27` — rc.3 prepared on top of the npm-published rc.2 with MCP on-demand disclosure and annotation-gated `mcp_call` (ADR-083), the PowerShell-free Windows sandbox helper (Issue 443), one writer lane per independent fix (ADR-084), temporal artifact evidence (FEATURE_320, Completed) and unique memory tool-outcome ids; rc.2 published with RepoIntel phase 0; FEATURE_300 remains Planned |
+| Roadmap updated | `2026-11-28` — rc.4 prepared on top of the npm-published rc.3 with the Windows sandbox setup consent repair (Issue 448: one UAC prompt per setup, a separate 10-minute consent wait, stable failure codes and setup progress phases); rc.3 published with MCP on-demand disclosure, the PowerShell-free Windows sandbox helper, per-fix writer lanes and temporal artifact evidence; FEATURE_300 remains Planned |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
 | Total tracked features | `96` |
 | InProgress | `3` |
@@ -555,6 +555,39 @@ Final frozen package **80** and historical/real-alpha.11 Host gates **4** passed
 and build fingerprints remained unchanged throughout. See the J guide for exact checkpoints.
 Space stays independently at `da531f0a`; its historical I counts do not certify a newly paired
 Space build. No push/publication.
+
+## v0.7.97-rc.4 Release Record
+
+`v0.7.97-rc.4` is the fourth release candidate of the v0.7.97 line: the
+Windows sandbox setup consent repair (Issue 448). `kodax-windows-sandbox.exe
+__elevated-setup` asks for UAC consent once and starts an elevated session
+that connects back to a named pipe served by the calling process; setup
+sends `srt-win uninstall`, `srt-win install` and the account capability
+step over that pipe, so replacing an old sandbox account shows one prompt
+instead of three and the PowerShell `RunAs` script is gone. The session
+trusts only the sandbox runner hash built into the native helper and
+refuses a wrong hash before the prompt. The UAC wait has its own 10-minute
+clock, each step has its own limit, and a prompt approved after the wait
+gave up finds no pipe and runs nothing. `SandboxSetupOutcome.code` is one
+of `setup_lock_busy`, `idle_probe_failed`, `sandbox_account_busy`,
+`elevation_timeout`, `elevation_cancelled`, `elevated_step_failed`,
+`native_artifact_unavailable` or `setup_failed`, `status: 'cancelled'`
+means exactly `elevation_cancelled`, and `onProgress` reports
+`waiting-for-other-setup`, `awaiting-elevation` and `elevated`. A second
+caller waits up to 45 minutes for a running setup and reuses it, and an
+interrupted setup is reported as `[windows_setup_interrupted]`. Real-UAC
+acceptance on the customer machine remains pending. The Issue 448 change
+put the CLI bundle 351 bytes past the audited 5 MiB minus 49 KiB gate; the
+gate is unchanged, and the CLI entry now builds with the `utf8` charset so
+its CJK UI text is no longer emitted as six-byte escapes. The CI/Release
+in-place upgrade gate now pins the published rc.3 tarball. Every v0.7.96
+stable and v0.7.97-alpha.1 through rc.3 client contract is retained;
+`SandboxSetupOutcome` gains the optional `code`, and `/sandbox` exports
+the `KodaXSandboxSetupErrorCode` and `KodaXSandboxSetupPhase` types. The
+changes are listed in the [CHANGELOG](../CHANGELOG.md). Cross-platform
+manual acceptance, the real-UAC acceptance run, installed Space/SDK
+acceptance, the Space dependency bump and npm publication remain manual
+maintainer steps.
 
 ## v0.7.97-rc.3 Release Record
 

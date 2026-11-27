@@ -4956,6 +4956,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
 | 448 | High | Resolved | Windows sandbox setup fails when UAC is approved late, and its failures have no codes | Windows v2 sandbox setup | unreleased (after `v0.7.97-rc.3`) | 2026-11-27 | 2026-11-27 |
+| 443 | High | Resolved | Windows Defender quarantines the sandbox helper that PowerShell writes into AppData | native artifact store V3 (PowerShell provisioning) | unreleased (after `v0.7.97-rc.2`) | 2026-11-25 | 2026-11-25 |
 | 442 | Medium | Resolved | Gemini and pi-messages replay another model's tool calls as text | `v0.7.97-alpha.12` | unreleased (after `v0.7.97-rc.1`) | 2026-11-23 | 2026-11-23 |
 | 441 | High | Resolved | Replayed reasoning from another model becomes reply text, and models learn to write their thinking into the answer | `v0.7.97-alpha.12` | unreleased (after `v0.7.97-rc.1`) | 2026-11-23 | 2026-11-23 |
 | 437 | Low | Open | Per-session lock and review directories are never reclaimed | `v0.7.85` | - | 2026-11-22 | - |
@@ -20742,7 +20743,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 317 (47 Open including 1 needs-info, 1 ready, 268 Resolved, 0 Partially Resolved, 1 Won't Fix)
+- Total: 318 (47 Open including 1 needs-info, 1 ready, 269 Resolved, 0 Partially Resolved, 1 Won't Fix)
 - Ready: 1 (420)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
