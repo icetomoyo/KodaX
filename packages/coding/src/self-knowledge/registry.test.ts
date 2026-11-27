@@ -217,6 +217,46 @@ describe('FEATURE_218 manual registry', () => {
     expect(repoIntelligence).toContain('.agent/repo-intelligence/');
   });
 
+  it('documents the MCP on-demand disclosure, annotation-gated calls and tool filters', () => {
+    const mcp = resolveKodaXManual({ topic: 'mcp' }).content;
+    const permissions = resolveKodaXManual({ topic: 'permissions' }).content;
+
+    expect(mcp).toContain('bounded manifest of the configured');
+    expect(mcp).toContain('such as args=(owner, repo, body?)');
+    expect(mcp).toContain('`mcp_describe` takes `id` plus up to 10 `ids`');
+    expect(mcp).toContain("includes the tool's input schema");
+    expect(mcp).toContain('marked `readOnlyHint` that is not destructive runs');
+    expect(mcp).toContain('Plan refuses any other MCP tool, and Edits asks before it');
+    expect(mcp).toContain('`enabledTools` and `disabledTools`');
+    expect(mcp).toContain('KodaX never runs it under the');
+    expect(mcp).toContain('times out after 300 seconds by default, restarted by server progress');
+    expect(mcp).toContain('retry HTTP 408, 429 and 5xx twice; a tool call is never retried');
+    expect(permissions).toContain('A Session grant for `mcp_call` binds the MCP tool id, not');
+  });
+
+  it('documents the PowerShell-free Windows sandbox helper and its non-retryable removal error', () => {
+    const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
+    const troubleshooting = resolveKodaXManual({ topic: 'troubleshooting' }).content;
+
+    expect(sandbox).toContain('a cold start launches no');
+    expect(sandbox).toContain("`reason: 'native_artifact_removed_after_provision'` and `retryable: false`");
+    // Leftovers of an earlier rewrite: a dangling half sentence and a repeated line.
+    expect(sandbox).not.toContain('check readiness once.');
+    expect(sandbox.match(/then proves one real target start/g)).toHaveLength(1);
+    expect(troubleshooting).toContain('`native_artifact_removed_after_provision`');
+    expect(troubleshooting).toContain('restore the file or allow that directory, then restart KodaX');
+  });
+
+  it('documents per-fix writer lanes and temporal artifact evidence', () => {
+    const agents = resolveKodaXManual({ topic: 'agents' }).content;
+    const tools = resolveKodaXManual({ topic: 'tools' }).content;
+
+    expect(agents).toContain('one writer lane per fix');
+    expect(agents).toContain('fixes that may touch the same files stay in one');
+    expect(tools).toContain('`artifact_capture` with');
+    expect(tools).toContain("video needs the Host's `ffmpegExecutable` and stays unverified without it");
+  });
+
   it('documents the corrected CLI, provider, and SDK facts of the current manual', () => {
     const overview = resolveKodaXManual({ topic: 'overview' }).content;
     const commands = resolveKodaXManual({ topic: 'commands' }).content;
