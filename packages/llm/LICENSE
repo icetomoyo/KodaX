@@ -1,6 +1,7 @@
-KodaX-AI Fair Core License (KAI-FCL) 1.0
+KodaX-AI Fair Core License (KAI-FCL) 1.1
 
-Copyright (c) 2026 icetomoyo <icetomoyo@gmail.com> <icetomoyo@163.com>
+Copyright (c) 2026 Wei Zhang (张伟), also known as icetomoyo
+<icetomoyo@gmail.com> <icetomoyo@163.com>
 
 All rights reserved except as expressly granted in this License.
 
@@ -31,8 +32,10 @@ separate KodaX-AI customer terms.
 configuration, examples, official npm packages, binaries, and other materials
 distributed by KodaX-AI under this License.
 
-"KodaX-AI" means the copyright owner, licensor, or license steward for the
-Software.
+"KodaX-AI" means Wei Zhang (张伟), who publishes under the names icetomoyo and
+KodaX-AI, as the copyright owner and licensor of the Software, together with
+that person's successors and assigns and any legal entity to which the rights
+in the Software are transferred.
 
 "You" means the individual or legal entity exercising permissions under this
 License.
@@ -40,13 +43,16 @@ License.
 "Community Use" means use by an individual for personal learning, individual
 non-commercial work, classroom instruction, non-production research, or
 developing and testing changes for contribution to public open-source
-projects.
+projects. Use by an individual on behalf of, at the direction of, or for the
+benefit of an employer, client, or other organization, and use in work done
+for payment, is not Community Use.
 
 "Commercial or Managed Use" means any use by or for a company, school, lab,
 institution, government agency, or other organization for administration, IT
 operations, team research and development, production work, intranet hosting,
 managed-device deployment, paid service delivery, customer redistribution,
-hosted or managed services, or other business purposes.
+hosted or managed services, or other business purposes. Any use that is not
+Community Use is Commercial or Managed Use.
 
 "Customer Agreement" means a written agreement with KodaX-AI, including
 evaluation terms, an order form, an enterprise agreement, partner terms, or
@@ -65,12 +71,19 @@ non-transferable, no-charge license to download, install, run, inspect, and
 modify the Software solely for Community Use.
 
 You may make copies of the Software as reasonably necessary for Your own
-Community Use, backup, testing, and contribution preparation. You may submit
-changes, patches, issues, and documentation improvements to KodaX-AI. Unless a
-separate written contribution agreement says otherwise, You grant KodaX-AI a
-perpetual, worldwide, irrevocable, royalty-free license to use, reproduce,
-modify, distribute, sublicense, and otherwise exploit contributions You submit
-for inclusion in the Software.
+Community Use, backup, testing, and contribution preparation. Modified versions
+of the Software, and works that include a substantial portion of it, remain
+subject to this License and carry no broader rights than the Software itself.
+A public fork made through the hosting platform's fork feature is permitted
+only for preparing contributions to KodaX-AI, must keep this LICENSE file and
+all notices, and must not be presented or offered as a separate product.
+
+You may submit changes, patches, issues, and documentation improvements to
+KodaX-AI. Unless a separate written contribution agreement says otherwise, You
+grant KodaX-AI a perpetual, worldwide, irrevocable, royalty-free license to
+use, reproduce, modify, distribute, sublicense, and otherwise exploit
+contributions You submit for inclusion in the Software, and You represent that
+You have the right to grant that license.
 
 3. Commercial and Managed Use
 
@@ -99,6 +112,12 @@ not:
   technical controls;
 - remove or alter copyright, license, attribution, trademark, or third-party
   notices;
+- use the Software, or any substantial portion of it, to build, offer, or
+  operate a product or service that competes with the Software or with
+  KodaX-AI's offerings;
+- divide, relabel, or route Commercial or Managed Use through individuals,
+  contractors, affiliates, or personal accounts in order to present it as
+  Community Use;
 - use KodaX-AI names, logos, product names, or trademarks except to describe
   the origin of the Software accurately;
 - violate applicable law or use the Software to infringe third-party rights.
@@ -150,9 +169,27 @@ INTERRUPTION, GOODWILL LOSS, OR PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES,
 ARISING OUT OF OR RELATING TO THE SOFTWARE OR THIS LICENSE, EVEN IF ADVISED OF
 THE POSSIBILITY OF SUCH DAMAGES.
 
-11. Contact
+11. License Versions
+
+KodaX-AI may publish revised versions of this License. Each copy of the
+Software is governed by the version of this License that KodaX-AI distributed
+with that copy. Copies that KodaX-AI distributed with KAI-FCL 1.0 remain
+governed by KAI-FCL 1.0 for those copies.
+
+12. General
+
+No rights are granted by implication, estoppel, or otherwise. This License
+grants no patent or trademark rights except as needed to exercise the
+permissions expressly stated in it. If any provision of this License is held
+unenforceable, that provision is enforced to the maximum extent permitted and
+the remaining provisions stay in effect. A failure or delay by KodaX-AI in
+enforcing any provision is not a waiver of it. You may not assign or transfer
+this License without KodaX-AI's prior written consent.
+
+13. Contact
 
 For enterprise evaluation, production licensing, redistribution permission, or
 questions about this License, contact:
 
-icetomoyo <icetomoyo@gmail.com> <icetomoyo@163.com>
+Wei Zhang (张伟), also known as icetomoyo
+<icetomoyo@gmail.com> <icetomoyo@163.com>

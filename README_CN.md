@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@kodax-ai/kodax"><img alt="npm version" src="https://img.shields.io/npm/v/@kodax-ai/kodax?style=flat-square&color=cb3837"></a>
-  <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-KAI--FCL_1.0-orange?style=flat-square"></a>
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-KAI--FCL_1.1-orange?style=flat-square"></a>
   <a href="https://github.com/icetomoyo/KodaX/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/icetomoyo/KodaX?style=flat-square&logo=github&color=f1c40f"></a>
   <a href="https://github.com/icetomoyo/KodaX/actions"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/icetomoyo/KodaX/release.yml?style=flat-square&label=release"></a>
   <img alt="providers" src="https://img.shields.io/badge/LLMs-16_别名_+_自定义-2ecc71?style=flat-square">
@@ -429,7 +429,7 @@ npm run build:binary:all      # 全部 5 个目标
 
 ## 许可证
 
-[KodaX-AI Fair Core License（KAI-FCL）1.0](LICENSE) — Copyright 2026 [icetomoyo](mailto:icetomoyo@gmail.com)。
+[KodaX-AI Fair Core License（KAI-FCL）1.1](LICENSE) — Copyright 2026 [icetomoyo](mailto:icetomoyo@gmail.com)。
 
 KAI-FCL 是源可用 / Fair Core 许可，而非 OSI 开源许可。商业、企业、托管部署、付费服务或客户再分发用途，在需要时须获得 KodaX-AI 授权。
 

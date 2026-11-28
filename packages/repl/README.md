@@ -232,7 +232,7 @@ npm test -- packages/repl/src
 
 ## License
 
-[KodaX-AI Fair Core License (KAI-FCL) 1.0](LICENSE). KodaX 0.7.70 and later
+[KodaX-AI Fair Core License (KAI-FCL) 1.1](LICENSE). KodaX 0.7.70 and later
 are source-available / fair-core, not OSI open source. Commercial or managed
 use requires KodaX-AI authorization. Earlier released Apache-2.0 copies keep
 their existing license.
