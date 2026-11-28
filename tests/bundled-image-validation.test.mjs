@@ -13,7 +13,12 @@ test('published media entry resolves its lazy decoder and keeps supported format
     ['valid.gif', 'image/gif'], ['valid.webp', 'image/webp'],
   ]) {
     const bytes = await readFile(new URL(`./fixtures/images/${name}`, import.meta.url));
-    assert.deepEqual(await validateImageBytes(bytes), { status: 'valid', mediaType });
+    // A decoded image also reports its pixel size (Issue 449).
+    const { status, mediaType: detected, width, height } = await validateImageBytes(bytes);
+    assert.equal(status, 'valid');
+    assert.equal(detected, mediaType);
+    assert.ok(Number.isInteger(width) && width > 0, `${name}: width ${String(width)}`);
+    assert.ok(Number.isInteger(height) && height > 0, `${name}: height ${String(height)}`);
   }
 });
 

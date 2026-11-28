@@ -20,7 +20,16 @@ test('bundled SA and credential broker share exact attachment evidence through d
     const history = [{ role: 'user', content: [{ type: 'image', path: file }] }];
     const original = JSON.stringify(history);
     let requests = 0;
+    // ADR-087 retries and then omits an image this model never accepted, without the
+    // diagnostic under test. A warmup turn makes the provider accept the image first.
+    let warmup = true;
     const client = { chat: { completions: { create: async (request, options) => {
+      if (warmup) {
+        if (request.stream) {
+          return (async function* () { yield { choices: [{ delta: { content: 'A small test image.' }, finish_reason: 'stop' }] }; })();
+        }
+        return { choices: [{ message: { content: '{}' }, finish_reason: 'stop' }] };
+      }
       requests++;
       if (requests === 1) {
         const m = request.messages.findIndex(message => JSON.stringify(message).includes('image_url'));
@@ -39,9 +48,12 @@ test('bundled SA and credential broker share exact attachment evidence through d
     } } } };
     Reflect.set(provider, 'buildClient', async () => client);
     registerModelProvider(provider.name, () => provider);
-    const result = await runWithProviderCredentialLeaseScope(scope, () => runKodaX({ provider: provider.name,
+    const run = prompt => runWithProviderCredentialLeaseScope(scope, () => runKodaX({ provider: provider.name,
       reasoningMode: 'off', lsp: false, maxIter: 1, context: { executionCwd: directory },
-      session: { initialMessages: history } }, 'Continue the text response.'));
+      session: { initialMessages: history } }, prompt));
+    assert.equal((await run('Describe this image.')).success, true);
+    warmup = false;
+    const result = await run('Continue the text response.');
     assert.equal(result.success, true);
     assert.equal(requests, 3);
     assert.equal(JSON.stringify(history), original);
