@@ -8268,7 +8268,7 @@ not part of the eval.
 
 ## ADR-086: The CLI Bundle Ceiling Is a Regression Tripwire with a 64 KiB Reserve
 
-**Status**: Accepted (2026-11-28). Unreleased; supersedes the 5 MiB − 49 KiB
+**Status**: Accepted (2026-11-28). Shipped in v0.7.97-rc.5; supersedes the 5 MiB − 49 KiB
 ceiling.
 
 **Context**: The build failed when `dist/kodax_cli.js` exceeded
@@ -8322,7 +8322,7 @@ The procedure lives in [DD CLI bundle budget](DD.md#cli-bundle-budget).
 
 ## ADR-087: New Images Are the Suspects of a Rejected Request, and a Repeated Rejection Offers Session Recovery
 
-**Status**: Accepted (2026-11-28). Unreleased; amends the Issue 335 recovery
+**Status**: Accepted (2026-11-28). Shipped in v0.7.97-rc.5; amends the Issue 335 recovery
 placement rationale.
 
 **Context**: In Issue 449 a 520x9800 screenshot exceeded DeepSeek's 8192 px

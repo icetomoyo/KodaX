@@ -6,6 +6,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.97-rc.5] - 2026-11-28
+
+Fifth release candidate of the v0.7.97 line: request image limits and
+session recovery for a rejected history (Issues 449, 450, ADR-087). An
+image larger than the provider's pixel limit no longer blocks every later
+request of a session: requests scale images over 8000 px on a side while
+the transcript and the file keep the original, and when a provider rejects
+a request the images that model never accepted are retried at 2000 px and
+then omitted with the provider's reason, without a model call. When the
+same 400, 413 or 422 from the same provider and model ends two Runs of a
+session in a row, the REPL suggests `/recover` and the Host reports
+`failureDetail.historyRejected: true`; nothing changes automatically. The
+CLI bundle ceiling is now a regression tripwire of the largest release CLI
+build plus 64 KiB, 5 MiB + 9 KiB, instead of 5 MiB − 49 KiB (ADR-086). The
+licence text is KAI-FCL 1.1 and names Wei Zhang (icetomoyo) as the
+copyright owner and licensor. `npm run release <flags>` is the same
+command as `node scripts/release.mjs <flags>`, and unknown arguments are
+refused. Every v0.7.96 stable and v0.7.97-alpha.1 through rc.4 client
+contract is retained; `failureDetail` gains the optional `historyRejected`.
+npm publication remains a manual maintainer action.
+
 ### Fixed
 
 - An image larger than the provider's pixel limit no longer blocks every
@@ -30,6 +53,13 @@ All notable changes to this project will be documented in this file.
   the largest release CLI build plus a 64 KiB reserve, currently
   5 MiB + 9 KiB (ADR-086). It replaces 5 MiB − 49 KiB, which left a few KB
   of headroom and blocked releases over a few hundred bytes.
+- The licence text is KAI-FCL 1.1. Organisational use cannot be presented
+  as individual use, modified copies and forks stay under the licence, there
+  is no competing use, and licence versions and general terms are stated.
+  Wei Zhang (icetomoyo) is named as the copyright owner and licensor.
+- `npm run release <flags>` is the same command as
+  `node scripts/release.mjs <flags>`. Unknown arguments are refused, so a
+  typo such as `--dryrun` never falls through to a real publish.
 
 ---
 

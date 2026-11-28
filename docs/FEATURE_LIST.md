@@ -11,16 +11,16 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.97-rc.4` (Git tag); `v0.7.96` remains the last stable release |
-| Current package version | `@kodax-ai/kodax@0.7.97-rc.4`; npm `rc` is `0.7.97-rc.3` (published 2026-11-27T02:57:57Z); rc.4 npm publication remains a manual maintainer step |
+| Current released version | `v0.7.97-rc.5` (Git tag); `v0.7.96` remains the last stable release |
+| Current package version | `@kodax-ai/kodax@0.7.97-rc.5`; npm `rc` is `0.7.97-rc.4` (published 2026-11-28T01:10:35Z); rc.5 npm publication remains a manual maintainer step |
 | Workspace baseline | `llm / agent / coding / repl` 4 core packages + private optional `artifacts` source workspace; one public npm package |
 | Released implementation | [FEATURE_301 v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) — managed Artifact SDK and PPT review loop, released in `v0.7.97-alpha.4` and extended with the unified Artifact SDK in `v0.7.97-alpha.5`; [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3` and extended with startup streamlining, Session recency ordering, draft admission, concurrent-launch recovery and shared-Session Host ownership resolution through `v0.7.97-alpha.7`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
 | Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement released in alpha.4; missing visual capabilities remain unverified; [design](ADR.md#verification-responsibility-and-tradeoffs) |
 | Artifact distribution revision | `2026-10-18` — one `@kodax-ai/kodax` npm package; four `/artifacts` subpaths and resources staged in the main tarball; local implementation, not yet published |
 | Current Artifact SDK additions | Unified visual evidence SDK and format backends released in `v0.7.97-alpha.5`: nine public operations, PDF/image/SVG/DOCX evidence, local HTML/SMIL capture and same-Host PNG reads; [support and limits](ARTIFACT_SDK.md) |
-| Current development | `v0.7.97-rc.4` Windows sandbox setup consent repair — one UAC prompt for the whole setup, including when it replaces an old sandbox account; the consent wait has its own 10-minute clock and a prompt approved after it runs nothing; `activateKodaXSandbox()` results carry a stable `code` and `onProgress` reports `waiting-for-other-setup`, `awaiting-elevation` and `elevated`; a second caller waits for a running setup and reuses it; an interrupted setup is reported as `[windows_setup_interrupted]`; the elevated session trusts only the sandbox runner hash built into the native helper (Issue 448; real-UAC acceptance pending); the CLI entry builds with the `utf8` charset to stay under the unchanged 5 MiB minus 49 KiB gate; [release preparation](release.md#v0797-rc4-release-preparation). On top of the rc.3 MCP detail on demand, PowerShell-free Windows sandbox helper, per-fix writer lanes and temporal artifact evidence. Cross-platform manual acceptance, installed Space/SDK acceptance, the Space dependency bump and the original slow first resume after rebuild remain open; Issue 395's intermittent failure cause and Issue 394's whole-task non-inferiority remain unproven. |
+| Current development | `v0.7.97-rc.5` request image limits and session recovery for a rejected history — requests scale images over 8000 px on a side while the file and the transcript keep the original; on a 400, 413 or 422 that is not about the account, the images a model never accepted are retried at 2000 px and then omitted with the provider's reason, without a model call (Issue 449); when the same content rejection ends two Runs of a session, the REPL suggests `/recover` and the Host reports `failureDetail.historyRejected` (Issue 450, ADR-087); the CLI bundle ceiling is a regression tripwire of the largest release CLI build plus 64 KiB, 5 MiB + 9 KiB (ADR-086); the licence text is KAI-FCL 1.1 and `npm run release` publishes the CI-built tarball; [release preparation](release.md#v0797-rc5-release-preparation). On top of the rc.4 Windows sandbox setup consent repair, the rc.3 MCP detail on demand, PowerShell-free Windows sandbox helper, per-fix writer lanes and temporal artifact evidence. Cross-platform manual acceptance, installed Space/SDK acceptance, the Space dependency bump and the original slow first resume after rebuild remain open; Issue 395's intermittent failure cause and Issue 394's whole-task non-inferiority remain unproven. |
 | Visual harness implementation | P3/P4/P5/P6 implemented within declared scope and released in `v0.7.97-beta.5` through the next-dev integration; [final ID/receipt contract delivery](designs/visual-harness-id-contract-delivery-2026-10-30.md). P7 task-value evaluation concluded **mixed; net task-quality/token value unproven**, against optimized pre-visual 1826cc22; [final review and limits](designs/visual-harness-current-version-closure-2026-10-30.md). The 2026-10-29 plan's "not executed" state and old r3 single-response results are historical, not the current outcome. Historical default suite 18,094 passed / 0 failed; earlier failures and unlocated causes remain recorded; [mainline integration acceptance](designs/next-dev-integration-execution-2026-11-09.md). No new feature ID/version assigned |
-| Roadmap updated | `2026-11-28` — rc.4 prepared on top of the npm-published rc.3 with the Windows sandbox setup consent repair (Issue 448: one UAC prompt per setup, a separate 10-minute consent wait, stable failure codes and setup progress phases); rc.3 published with MCP on-demand disclosure, the PowerShell-free Windows sandbox helper, per-fix writer lanes and temporal artifact evidence; FEATURE_300 remains Planned |
+| Roadmap updated | `2026-11-28` — rc.5 prepared on top of the npm-published rc.4 with request image limits and session recovery for a rejected history (Issues 449-450, ADR-087), the CLI bundle tripwire (ADR-086), KAI-FCL 1.1 and `npm run release`; rc.4 published with the Windows sandbox setup consent repair; FEATURE_300 remains Planned |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
 | Total tracked features | `96` |
 | InProgress | `3` |
@@ -555,6 +555,40 @@ Final frozen package **80** and historical/real-alpha.11 Host gates **4** passed
 and build fingerprints remained unchanged throughout. See the J guide for exact checkpoints.
 Space stays independently at `da531f0a`; its historical I counts do not certify a newly paired
 Space build. No push/publication.
+
+## v0.7.97-rc.5 Release Record
+
+`v0.7.97-rc.5` is the fifth release candidate of the v0.7.97 line:
+request image limits and session recovery for a rejected history
+(Issues 449, 450, ADR-087). A 520x9800 screenshot had exceeded the
+provider's 8192 px limit, and every later request of the session failed
+with the same 400. Requests now scale images over 8000 px on a side while
+the file and the transcript keep the original. KodaX records which image
+payloads each provider and model accepted; on a 400, 413 or 422 that is
+not about the account, the images that model never accepted are retried
+at 2000 px and then omitted with the provider's reason, even when the
+error does not mention images. Accepted images keep their bytes and the
+prompt cache, and these steps make no model call and use no retry slot.
+The Anthropic-compatible client sets a request timeout, so the
+non-streaming recovery request is no longer refused locally, and a 4xx
+is classified by its status before its text. When the same content
+rejection from the same provider and model ends two Runs of a session
+that has an answered turn, the failure is marked `historyRejected`: the
+REPL suggests `/recover` and the Host reports
+`failureDetail.historyRejected`, also after a restart. Nothing changes
+automatically, and a live request with the real screenshot has not been
+run. ADR-086 makes the CLI bundle ceiling a regression tripwire of the
+largest release CLI build plus 64 KiB, 5 MiB + 9 KiB (5,252,096 bytes),
+replacing the 5 MiB − 49 KiB gate. The licence text is KAI-FCL 1.1, with
+Wei Zhang (icetomoyo) as the copyright owner and licensor, and
+`npm run release <flags>` is the same command as
+`node scripts/release.mjs <flags>`, with unknown arguments refused. The
+CI/Release in-place upgrade gate now pins the published rc.4 tarball.
+Every v0.7.96 stable and v0.7.97-alpha.1 through rc.4 client contract is
+retained; `failureDetail` gains the optional `historyRejected`. The
+changes are listed in the [CHANGELOG](../CHANGELOG.md). Cross-platform
+manual acceptance, installed Space/SDK acceptance, the Space dependency
+bump and npm publication remain manual maintainer steps.
 
 ## v0.7.97-rc.4 Release Record
 
