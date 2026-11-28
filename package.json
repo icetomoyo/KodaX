@@ -103,6 +103,7 @@
   },
   "scripts": {
     "prepack": "node scripts/prepare-asrt-wfp.mjs",
+    "release": "node scripts/release.mjs",
     "build": "npm run config:templates:check && npm run prompts:text:check && npm run build:packages && npm run build:native && npm run build:bundle && npm run build:dts",
     "config:templates:sync": "node scripts/sync-config-templates.mjs",
     "config:templates:check": "node scripts/sync-config-templates.mjs --check",

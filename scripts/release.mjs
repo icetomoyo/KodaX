@@ -34,6 +34,8 @@
 //                                          # so npm refuses to publish it.
 //   node scripts/release.mjs --skip-build --pack-only
 //                                         # assume dist/ is already built (advanced)
+//   `npm run release <flags>` is the same command; `npm run release -- <flags>` too.
+//   Unknown arguments are refused, so a typo never falls through to a real publish.
 //
 // Publish steps (default mode):
 //   1. Verify git is clean (no uncommitted changes).
@@ -71,12 +73,30 @@ const repoRoot = path.resolve(__dirname, '..');
 const rootPkgPath = path.join(repoRoot, 'package.json');
 
 // ---- argv ----
+// `npm run release --dry-run` (without `--`) does not pass the flag on: npm keeps
+// it and exports npm_config_dry_run=true instead. Reading both makes
+// `npm run release <args>` behave like `node scripts/release.mjs <args>`.
+const FLAGS = ['dry-run', 'skip-build', 'pack-only', 'artifacts'];
+const OPTIONS = ['otp'];
+const envKey = (name) => `npm_config_${name.replace(/-/g, '_')}`;
 const argv = process.argv.slice(2);
-const isDryRun = argv.includes('--dry-run');
-const skipBuild = argv.includes('--skip-build');
-const packOnly = argv.includes('--pack-only');
-const otpArg = argv.find((a) => a.startsWith('--otp='));
-const otp = otpArg ? otpArg.split('=')[1] : null;
+// A typo such as `--dryrun` must not fall through to a real publish.
+const unknownArgs = argv.filter((a) => !FLAGS.includes(a.slice(2)) && !OPTIONS.some((o) => a.startsWith(`--${o}=`)));
+if (unknownArgs.length > 0) {
+  console.error(`[release] ERROR unknown argument ${unknownArgs.join(' ')}; known: ${[...FLAGS.map((f) => `--${f}`), ...OPTIONS.map((o) => `--${o}=...`)].join(' ')}`);
+  process.exit(1);
+}
+const flag = (name) => argv.includes(`--${name}`) || process.env[envKey(name)] === 'true';
+const option = (name) => argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1] ?? (process.env[envKey(name)] || null);
+const isDryRun = flag('dry-run');
+const skipBuild = flag('skip-build');
+const packOnly = flag('pack-only');
+const otp = option('otp');
+// The npm commands this script runs must not inherit those variables:
+// npm_config_dry_run would silently turn `npm pack` / `npm publish` into dry runs.
+const childEnv = Object.fromEntries(
+  Object.entries(process.env).filter(([key]) => ![...FLAGS, ...OPTIONS].map(envKey).includes(key.toLowerCase())),
+);
 
 function log(msg) {
   console.log(`[release] ${msg}`);
@@ -90,7 +110,7 @@ function runCmd(cmd, args, opts = {}) {
   const result = spawnSync(cmd, args, {
     cwd: repoRoot,
     stdio: 'inherit',
-    env: process.env,
+    env: childEnv,
     shell: process.platform === 'win32',
     ...opts,
   });
@@ -418,7 +438,7 @@ async function downloadReleaseAsset(slug, version, filename) {
 }
 
 async function main() {
-  if (argv.includes('--artifacts')) {
+  if (flag('artifacts')) {
     throw new Error('Artifact SDK ships inside @kodax-ai/kodax. Use the root release command without --artifacts.');
   }
   // Sanity: git clean (uncommitted changes risk shipping unexpected dist).

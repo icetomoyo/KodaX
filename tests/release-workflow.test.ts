@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -519,4 +520,38 @@ describe('GitHub release workflow', () => {
     }
   });
 
+});
+
+describe('release command line', () => {
+  // Flags npm itself would read must not leak in from the shell running the tests.
+  const baseEnv = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !/^npm_config_(dry_run|skip_build|pack_only|artifacts|otp)$/i.test(key)),
+  );
+  const release = (args: readonly string[], env: NodeJS.ProcessEnv = {}) =>
+    spawnSync(process.execPath, [resolve('scripts/release.mjs'), ...args], {
+      encoding: 'utf8',
+      env: { ...baseEnv, ...env },
+      timeout: 30_000,
+    });
+
+  it('refuses arguments it does not know before doing anything', () => {
+    for (const args of [['--dryrun'], ['beta'], ['--dry-run', 'rc']]) {
+      const result = release(args);
+      expect(result.status, args.join(' ')).toBe(1);
+      expect(result.stderr).toMatch(/unknown argument/);
+      expect(result.stdout).not.toContain('Version:');
+    }
+  });
+
+  it('reads the flags npm keeps for itself when `npm run release` is called without --', () => {
+    const result = release([], { npm_config_artifacts: 'true' });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Artifact SDK ships inside @kodax-ai/kodax');
+  });
+
+  it('keeps those npm flags away from the npm commands it runs', () => {
+    const source = readFileSync(resolve('scripts/release.mjs'), 'utf8');
+    expect(source).toContain('env: childEnv');
+    expect(source).not.toContain('env: process.env');
+  });
 });
