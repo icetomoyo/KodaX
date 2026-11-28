@@ -1776,6 +1776,50 @@ and display.
 - Explicit local execution failures are classified as `local_execution`, not
   provider failures.
 
+### Request image limits and rejected images (ADR-087)
+
+`image-serialization.ts` in `@kodax-ai/llm` scales any image over 8000 px on
+a side when the request is prepared. The file and the transcript keep the
+original, and the sent image carries a notice with both sizes.
+
+After each successful response, `acceptRequestImages`
+(`coding/src/resilience/text-recovery.ts`) records `provider\0model\0sha256`
+of every image payload sent. The record is process memory, capped at 4096
+entries. Scaling is deterministic, so a later Run sends the same bytes and
+still finds them.
+
+On a provider 400, 413 or 422 that does not match `ACCOUNT_FAILURE`,
+`tryTextRecovery` tries these steps in order:
+
+1. `reducePreparedImages` caps the images that model never accepted at
+   2000 px. If every image was accepted and the error mentions images, it
+   caps all of them. Each image is reduced at most once per Run.
+2. `unacceptedPreparedImages` lists the images still never accepted, and
+   they are omitted with the provider's reason in the placeholder.
+3. The Issue 335 diagnostic runs as before.
+
+Steps 1 and 2 make no model call, so the call sites give the retry slot
+back (`attempt += used ? 1 : -1`). The run substrate and the managed-task
+adapter share this order.
+
+### Repeated history rejection (ADR-087)
+
+`resilience/history-rejection.ts` keeps one record per session in process
+memory, capped at 256: `provider\0model\0httpStatus\0upstreamCode` of the
+last failure that was a 400, 413 or 422 outside `ACCOUNT_FAILURE`.
+`runManagedTask` calls `recordRunResult` for each result and `recordRunError`
+for each thrown error. When the key repeats and the messages already hold an
+assistant turn, the failure gets `historyRejected: true`. On a thrown error
+the mark goes on both carriers it may have: the provider failure and the
+failure result. A success clears the record. A failure without a key (5xx,
+network, local) leaves it as it is.
+
+`isHistoryRejected` reads every carrier. `isSessionRecoveryCandidateError`
+accepts it, which shows the REPL `/recover` hint. The Host copies it into
+`failureDetail.historyRejected` and keeps it when it reloads a settled Run.
+The REPL client plane puts the flag on the error it throws for a failed
+round.
+
 ## 13. MCP And A2A
 
 MCP lives under `packages/agent/src/capabilities/mcp`.

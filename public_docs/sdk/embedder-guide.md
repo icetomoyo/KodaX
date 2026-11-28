@@ -3953,6 +3953,7 @@ failureSub.close();
 | `requestId` | Optional bounded upstream request identifier for provider support. |
 | `retryAfterMs` | Optional validated retry delay, capped at 24 hours. Absence does not imply immediate retry is safe. |
 | `contextTokens` | Present for `context_capacity`; contains bounded non-negative `required` and `available` token counts for diagnostics and UI guidance. |
+| `historyRejected` | Optional `true`. The previous Run of this Session ended with the same content rejection (HTTP 400, 413 or 422 from the same provider and model, not an account or quota error), and the Session already has an answered turn, so its history is the likely cause. Offer `sessions.recoverSession`; the Host changes nothing itself. A successful Run clears the record. It lives in Host memory, so after a Host restart two more failures are needed. Absence does not prove the history is fine. |
 
 The stable classification is:
 

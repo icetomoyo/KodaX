@@ -5,7 +5,7 @@ import type {
   ClientSessionView,
   ClientViewItem,
 } from '@kodax-ai/coding/client-contract';
-import { CANCELLED_TOOL_RESULT_MESSAGE, type AskUserAnswer } from '@kodax-ai/coding';
+import { CANCELLED_TOOL_RESULT_MESSAGE, isSessionRecoveryCandidateError, type AskUserAnswer } from '@kodax-ai/coding';
 import { ToolCallStatus } from './types.js';
 import { isTranscriptItemVisible, resolveTranscriptSelectionOffset } from './utils/transcript-scroll-controller.js';
 import { buildTranscriptToolInputCopyText, buildTranscriptCopyText, searchTranscriptItems } from './utils/transcript-search.js';
@@ -852,6 +852,20 @@ describe('runClientPlaneRound queue chain (T17)', () => {
       ? followClientPlaneRun({ plane, sessionId: 's1', runId: 'r1' })
       : runClientPlaneRound({ plane, sessionId: 's1', prompt: 'Run task' });
     await expect(pending).rejects.toThrow('Settlement could not be confirmed');
+  });
+
+  // Issue 450: the REPL's recovery offer reads the Host's history-rejection fact from the thrown error.
+  it.each(['command', 'input'])('carries a history rejection on the %s error', async mode => {
+    const plane = scriptedPlane({ firstAcceptance: { runId: 'r1' }, activeRun: [], outcomes: {
+      r1: { phase: 'failed', error: 'Provider rejected the request.', failureDetail: { failureKind: 'upstream', stage: 'transport',
+        providerErrorCode: 'upstream_client_error', safeMessage: 'Provider rejected the request.', historyRejected: true } },
+    } });
+    const pending = mode === 'command'
+      ? followClientPlaneRun({ plane, sessionId: 's1', runId: 'r1' })
+      : runClientPlaneRound({ plane, sessionId: 's1', prompt: 'Run task' });
+    const error = await pending.then(() => undefined, (reason: unknown) => reason);
+    expect(error).toBeInstanceOf(Error);
+    expect(isSessionRecoveryCandidateError(error as Error, 5)).toBe(true);
   });
 
   it('forwards prompt input artifacts with the submission (T27 review)', async () => {

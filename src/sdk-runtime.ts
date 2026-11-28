@@ -184,6 +184,7 @@ import {
   parseInlineSkillReferences,
   parseBareInlineSlashReferences,
   isReadOnlyMcpCall,
+  isHistoryRejected,
   type KodaXShellPermissionMode,
 } from "@kodax-ai/coding";
 import {
@@ -2486,6 +2487,11 @@ export interface RuntimeFailureDetail {
   };
   /** Upstream token evidence; bounds are never presented as exact required totals. */
   readonly contextOverflow?: KodaXContextOverflowFacts;
+  /**
+   * The same Provider content rejection also ended this Session's previous Run, so its
+   * history is the likely cause. Clients may offer `recoverSession`; nothing is changed automatically.
+   */
+  readonly historyRejected?: true;
 }
 
 export interface RuntimeTerminalFact {
@@ -19610,6 +19616,7 @@ function parseRuntimeFailureDetail(
       : {}),
     ...(readRuntimeContextOverflow(value.contextOverflow)
       ? { contextOverflow: readRuntimeContextOverflow(value.contextOverflow) } : {}),
+    ...(value.historyRejected === true ? { historyRejected: true as const } : {}),
   };
 }
 
@@ -25278,6 +25285,7 @@ function buildRuntimeFailureDetail(
     ...(isRuntimeElapsedMs(elapsedMs) ? { elapsedMs } : {}),
     ...(contextTokens !== undefined ? { contextTokens } : {}),
     ...(contextOverflow !== undefined ? { contextOverflow } : {}),
+    ...(isHistoryRejected(error) ? { historyRejected: true as const } : {}),
   };
 }
 

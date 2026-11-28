@@ -44,7 +44,7 @@ import {
   type CostTracker,
 } from '@kodax-ai/llm';
 import path from 'path';
-import { createTextRecoveryState, projectTextRecovery, tryTextRecovery } from '../resilience/text-recovery.js';
+import { acceptRequestImages, createTextRecoveryState, projectTextRecovery, tryTextRecovery } from '../resilience/text-recovery.js';
 import { waitForContextRecovery } from '../context-recovery-wait.js';
 import { prepareUserInputMemory } from '../user-input-memory.js';
 import { countTokens, estimateTokens } from '../tokenizer.js';
@@ -2077,6 +2077,7 @@ async function runSubstrateInContext(
             activeProviderRequestId,
           );
           emitPromptCacheDiagnosticResponse(events, cacheDiagnostic, result.usage);
+          acceptRequestImages(wireMessages, streamProvider, turnState.currentModelOverride);
 
           messages = providerMessages;
           break;
@@ -2257,7 +2258,9 @@ async function runSubstrateInContext(
                 cacheReadTokens: usage.cachedReadTokens, cacheWriteTokens: usage.cachedWriteTokens });
                 reportRecoveryUsage?.(usage); },
             });
-            if (recovered) { attempt += 1; textRecoveryRetry = true; continue; }
+            // An image step needs no model call and changes each image once, so it keeps this retry slot
+            // and the diagnostic stays available. The diagnostic itself consumes one more slot.
+            if (recovered) { attempt += textRecovery.used ? 1 : -1; textRecoveryRetry = textRecovery.used; continue; }
             messages = providerMessages;
             const boundary = boundarySession.snapshot();
             terminalExecutionFailure = buildProviderExecutionFailure({

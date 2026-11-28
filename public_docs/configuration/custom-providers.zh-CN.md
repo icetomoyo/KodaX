@@ -130,6 +130,8 @@ DeepSeek Chat Completions 使用 `max_tokens`；OpenAI 默认使用 `max_complet
 
 对于纯文本模型，保持 `imageInput` 未设置——图像 artifact 在请求发送前会以 `MODEL_INPUT_UNSUPPORTED` 被拒绝。
 
+单边超过 8000 px 的图像会缩小后发送；文件和对话记录保留原图。如果模型拒绝了一个带有它从未接受过的图像的请求（HTTP 400、413 或 422），KodaX 会把该图像缩到 2000 px 重试，仍被拒绝时就带上 Provider 给出的原因略去它。因此像素上限更低的模型不需要额外配置。
+
 内置支持视觉的别名（Anthropic、OpenAI、Kimi、Qwen、Zhipu、MiniMax、MiMo、Ark 以及 Gemini-CLI）已默认启用图像输入。在内置 `deepseek` 别名上，默认 `deepseek-flash`（DeepSeek-V4.1-Flash）原生支持图像；旧版 `deepseek-v4-pro` 和 Codex-CLI 为纯文本；自定义提供商需要显式选择启用。
 
 ## 另见

@@ -1243,6 +1243,11 @@ export interface KodaXExecutionFailure {
   readonly requestId?: string;
   readonly retryAfterMs?: number;
   readonly elapsedMs?: number;
+  /**
+   * The same Provider content rejection ended this session's previous Run too, so
+   * something in the history is the likely cause. Clients may offer session recovery.
+   */
+  readonly historyRejected?: boolean;
 }
 
 export interface KodaXChildAgentResult {

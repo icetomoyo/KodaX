@@ -13,7 +13,7 @@ it.each([
 ])('preserves valid %s bytes and reports their actual MIME', async (name, mediaType) => {
   const bytes = await readFile(new URL(name!, fixtures));
   const original = Buffer.from(bytes);
-  await expect(validateImageBytes(bytes)).resolves.toEqual({ status: 'valid', mediaType });
+  await expect(validateImageBytes(bytes)).resolves.toEqual({ status: 'valid', mediaType, width: expect.any(Number), height: expect.any(Number) });
   expect(bytes).toEqual(original);
 });
 

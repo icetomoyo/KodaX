@@ -65,7 +65,7 @@ import {
   type RunnerLlmResult,
 } from '@kodax-ai/agent';
 import { resolveProvider } from '../../../providers/index.js';
-import { createTextRecoveryState, projectTextRecovery, tryTextRecovery } from '../../../resilience/text-recovery.js';
+import { acceptRequestImages, createTextRecoveryState, projectTextRecovery, tryTextRecovery } from '../../../resilience/text-recovery.js';
 import {
   KODAX_MAX_MAXTOKENS_RETRIES,
   KODAX_MAX_EMPTY_COMPLETION_RETRIES,
@@ -1076,6 +1076,7 @@ export function buildRunnerLlmAdapter(
             ),
           ), options.abortSignal, () => retryTimeoutController.abort(new Error('Run stopped')));
           completePromptCacheDiagnostic(cacheDiagnostic, raw.usage);
+          acceptRequestImages(wireProviderMessages, provider, activeModel);
           // max_tokens escalation: if the capped budget hit the cap and
           // we haven't yet escalated this adapter call, stage
           // KODAX_ESCALATED_MAX_OUTPUT_TOKENS for the next iteration and
@@ -1355,7 +1356,9 @@ export function buildRunnerLlmAdapter(
                 model: activeModel ?? provider.getModel(), inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
                 cacheReadTokens: usage.cachedReadTokens, cacheWriteTokens: usage.cachedWriteTokens, ...(usage.cachedWriteTokensByTtl ? { cacheWriteTokensByTtl: usage.cachedWriteTokensByTtl } : {}) }); },
             });
-            if (recovered) { attempt += 1; textRecoveryRetry = true; nextRequestMode = 'replace'; continue; }
+            // An image step needs no model call and changes each image once, so it keeps this retry slot
+            // and the diagnostic stays available. The diagnostic itself consumes one more slot.
+            if (recovered) { attempt += textRecovery.used ? 1 : -1; textRecoveryRetry = textRecovery.used; nextRequestMode = 'replace'; continue; }
             // Preserve the Runner transcript on the thrown error so the
             // outer wrapper's session-snapshot save can persist real history
             // instead of `[]`. Non-enumerable so JSON-serializing telemetry

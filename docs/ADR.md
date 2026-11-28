@@ -7407,6 +7407,9 @@ second identity, credential scope and retry loop without better evidence.
 Out of scope: other error classes, auth/quota/transport failures, crash-restart
 recovery, automatic Provider fallback, and re-encoding locally valid images.
 
+ADR-087 later put two image steps without a model call before this diagnosis,
+and they re-encode locally valid images.
+
 ### FEATURE_299 v0.7.96 — admitted control and extension execution
 
 Session Stop is a control operation over admitted Run/Session/Profile and owner
@@ -8316,3 +8319,65 @@ The procedure lives in [DD CLI bundle budget](DD.md#cli-bundle-budget).
   fences already cover startup structure.
 - **A per-change size delta gate.** It needs a stored baseline per build
   composition, which is more machinery than the problem needs.
+
+## ADR-087: New Images Are the Suspects of a Rejected Request, and a Repeated Rejection Offers Session Recovery
+
+**Status**: Accepted (2026-11-28). Unreleased; amends the Issue 335 recovery
+placement rationale.
+
+**Context**: In Issue 449 a 520x9800 screenshot exceeded DeepSeek's 8192 px
+limit. Every later request of the session failed with the same 400. The
+Issue 335 diagnostic, which could have dropped the image, never ran: the
+Anthropic SDK refused its non-streaming 128k request locally. Even when it
+runs, it costs a model call and a retry slot, and it needs the error to
+point at the image. Provider errors often do not.
+
+A session can be blocked by anything else in its history in the same way.
+`/recover` and `sessions.recoverSession` could already continue from a safe
+summary, but nothing offered them for a plain 400.
+
+**Decision**:
+
+- Requests scale images over 8000 px on a side. The file and the transcript
+  keep the original.
+- KodaX records which image payloads each provider and model has accepted.
+  When a request is rejected with 400, 413 or 422 and the error is not about
+  the account, the images that model never accepted are the suspects. If
+  earlier requests passed, a new image is the likeliest cause, whatever the
+  error text says. The suspects are retried at 2000 px and then omitted with
+  the provider's reason. Accepted images keep their bytes, so the prompt
+  cache stays valid. These steps make no model call and use no retry slot.
+  The Issue 335 diagnostic stays for failures they cannot explain.
+- When the same content rejection from the same provider and model ends two
+  Runs of a session that has an answered turn, the failure is marked
+  `historyRejected`. The REPL suggests `/recover`, and the Host reports
+  `failureDetail.historyRejected`. Nothing changes automatically.
+
+The design is in [DD request image limits](DD.md#request-image-limits-and-rejected-images-adr-087)
+and [DD repeated history rejection](DD.md#repeated-history-rejection-adr-087).
+
+**Consequences**:
+
+- An oversized or unsupported new image no longer blocks a session, even
+  when the provider's error does not name images.
+- An image already accepted is never reduced because of an unrelated
+  rejection, unless the error mentions images and no new image exists.
+- The accepted-image record is in process memory. After a restart, one extra
+  rejection may reduce an image that was accepted before.
+- The recovery offer needs two failures, also after a Host restart. A
+  missing mark does not prove the history is fine.
+
+**Rejected alternatives**:
+
+- **Shrink every image to 2000 px at ingest, as pi and opencode do.** It
+  loses detail on models that accept larger images.
+- **Reduce or drop images only when the error mentions images.** Provider
+  errors often do not, so the blocked session from Issue 449 would stay
+  blocked.
+- **Reduce every image on any rejection.** It changes accepted bytes, which
+  breaks the prompt cache and punishes images that were not the cause.
+- **Recover the session automatically after a repeated rejection.** A new
+  session loses the raw history, and the user should decide that. The
+  Issue 335 diagnostic also cannot fix every cause.
+- **Persist the accepted-image and rejection records.** Losing them costs one
+  extra rejection, which does not justify a new store.

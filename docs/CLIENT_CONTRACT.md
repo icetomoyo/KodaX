@@ -548,6 +548,13 @@ Space 的注册和调用前检查由 Space 单独接入。
 源扫描不完整时，已发现的技能继续可用；缺失目标不能被断言为不存在，须返回
 注册表不可用。修复来源后重新发现会更新该事实；可选来源缺失不算扫描失败。
 
+`failureDetail.historyRejected: true` 表示同一 Session 的上一个 Run 也以同一
+Provider、同一模型、同一状态（400/413/422，非账号或配额错误）的内容拒绝结束，
+且该 Session 已有回答过的轮次，因此历史很可能是原因。客户端可以提示用户用
+`sessions.recoverSession` 从安全摘要派生新 Session 继续；Host 不自动改动任何东西。
+成功的 Run 会清除该记录；记录只在 Host 内存中，Host 重启后需要再失败两次。
+已结算 Run 的该字段跨重启保留。字段缺失不代表历史无害。
+
 以 `failed` 结束且带 `failureDetail` 的 Run，会在会话视图追加并保存一条 `type: 'error'` 项：`sourceRunId` 为该 Run，`text` 等于 `failureDetail.safeMessage`，`afterInputId` 为该 Run 最后交付的输入，因此重开会话后失败仍位于对应输入之后。`cancelled`/`interrupted` 不追加。Provider 用尽恢复后，视图不再写入命令行版“输入 continue/stop”提示；SDK 不处理这两个指令，失败由上述错误项说明。客户端按 `sourceRunId` 是否为当前 Run 决定是否补充 `failureDetail` 详情。
 
 常见边界包括 conflict（意图或 revision 冲突）、not_found、permission_denied、unauthorized、version_incompatible/client_upgrade_required、resync_required/data_changed、runtime_changed、observation_invalidated 和读取超时/取消。不要将这些错误统一吞为“没有数据”或“已完成”。具体码以 [daemon protocol](../src/runtime-daemon/protocol.ts) 及执行域为准，当前协议码表不是纯产品 SDK 的穷尽错误类型。Runtime 自己命名的失败码经 daemon 转成客户端可处理的协议码，原码放在 data 里：冲突类在 `data.conflict`，其余在 `data.reason`。例如 Session 在后台修复 Actor 结算期间，`runs.start` 和 `inputs.submit` 报告 `conflict`，`data.conflict` 为 `actor_settlement_not_persisted` 或 `actor_settlement_retrying`，修复完成后重试即可；以前 daemon 报告的是 `internal_error`。

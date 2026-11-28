@@ -12,7 +12,7 @@ it.each(['images', 'chat-completions'] as const)('generates complete admitted im
   vi.stubGlobal('fetch', fetcher);
   const result = await generateImages({ name: 'artist', model: 'image-fixture', api: 'openrouter-images', dialect,
     baseUrl: 'https://openrouter.ai/api/v1', apiKeyEnv: 'IMAGE_API_KEY' }, { prompt: 'Draw a tree', images: [{ data, mediaType: 'image/png' }] });
-  expect(result.images).toEqual([{ data, mediaType: 'image/png', validation: { status: 'valid', mediaType: 'image/png' } }]);
+  expect(result.images).toEqual([{ data, mediaType: 'image/png', validation: { status: 'valid', mediaType: 'image/png', width: expect.any(Number), height: expect.any(Number) } }]);
   expect(result.usage).toMatchObject({ inputTokens: 10, outputTokens: 20 });
   expect(result.cost).toEqual({ amount: 0.04, currency: 'USD', source: 'reported' });
   expect(fetcher.mock.calls[0]?.[0]).toBe(`https://openrouter.ai/api/v1/${dialect === 'images' ? 'images' : 'chat/completions'}`);

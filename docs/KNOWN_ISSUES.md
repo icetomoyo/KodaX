@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-11-27_
+_Last Updated: 2026-11-28_
 
 ---
 
@@ -46,6 +46,212 @@ This predates the child contract projection; the eval uses raw per-call usage,
 not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
+
+## Issue 450: A session whose history the provider keeps rejecting is never offered recovery
+
+- Priority: High
+- Status: Resolved
+- Introduced: session recovery offer (`/recover`, `sessions.recoverSession`) matched only overload and thinking-replay errors
+- Created / Resolved: 2026-11-28 / 2026-11-28
+- Fixed: unreleased (after `v0.7.97-rc.4`)
+- Reported by: owner, while reviewing Issue 449
+
+### Original Problem
+
+In Issue 449 one rejected screenshot stayed in the history, and every later
+request of the session failed with the same 400. Issue 449 now handles
+images, but anything else the provider refuses in the history has the same
+effect. Every new message fails, and the session cannot continue.
+
+KodaX can already continue in a new session from a safe summary: `/recover`
+in the REPL and `sessions.recoverSession` for SDK clients. The REPL offered
+it only for overload errors, thinking-replay errors and a few history
+messages. A plain 400 never matched, and the Host told clients nothing they
+could act on.
+
+### Resolution
+
+- `runManagedTask` remembers each session's last content rejection: HTTP
+  400, 413 or 422 from the provider, without account, key, quota or rate
+  wording. When the next Run of that session ends with the same rejection
+  from the same provider and model, the failure is marked
+  `historyRejected`. The session must already have an answered turn, so a
+  configuration error in a new session is not blamed on its history. A
+  successful Run clears the record. Failures that say nothing about the
+  request, such as 5xx or network errors, leave it as it is.
+- The record lives in Host memory. After a restart, two more failures are
+  needed.
+- The Host reports `failureDetail.historyRejected: true`, and the value
+  survives a Host restart. Clients may offer `sessions.recoverSession`. The
+  Host changes nothing itself.
+- The REPL shows its `/recover` hint for a marked failure, in both the Ink
+  and the classic REPL.
+
+No LLM-facing text changed.
+
+Files changed:
+
+- `packages/coding/src/resilience/history-rejection.ts` (new): the record,
+  the mark and `isHistoryRejected`.
+- `packages/coding/src/task-engine.ts`: `runManagedTask` records every
+  result and error.
+- `packages/coding/src/types.ts`, `client-contract.ts`: `historyRejected`.
+- `packages/coding/src/resilience/classifier.ts`: the recovery offer accepts
+  a marked failure.
+- `src/sdk-runtime.ts`, `src/runtime-daemon/schema.ts`: `failureDetail`
+  field, also on reload.
+- `packages/repl/src/ui/client-plane.ts`: the thrown round error keeps the
+  mark.
+
+Tests:
+
+- `history-rejection.test.ts`: the second identical rejection is marked, also
+  on every carrier of a thrown error; a success clears it; a 5xx or network
+  failure in between keeps it; another provider, model or status does not
+  match; account 400, 401, 404, 500 and local failures are ignored; a session
+  without an answered turn is not marked; sessions are separate.
+- `resilience.test.ts`: the recovery offer accepts a marked failure, and the
+  flag set on an error by a client.
+- `sdk-runtime.test.ts`: `failureDetail.historyRejected` after the Run and
+  after a Host restart.
+- `client-plane.test.ts`: command and input rounds keep the mark on the
+  thrown error.
+
+Not covered: a real provider rejecting a history. The manual check uses a
+model id the provider answers with 400. See
+`docs/test-guides/ISSUE_449_450_v0.7.97_REGRESSION_GUIDE.md`.
+
+## Issue 449: An image over the provider's pixel limit blocks every later request in the session
+
+- Priority: High
+- Status: Resolved
+- Introduced: image `read` and history image replay (no pixel limit ever existed); recovery crash since Issue 335
+- Created / Resolved: 2026-11-28 / 2026-11-28
+- Fixed: unreleased (after `v0.7.97-rc.4`)
+- Reported by: owner, on Space `v0.1.47-rc.2` with KodaX `v0.7.97-rc.2`, `deepseek/deepseek-flash`
+
+### Original Problem
+
+The owner reported a Space/CLI conflict: after switching the CLI model,
+Space kept failing with provider 400 until both used `glm-5.4`. The copied
+data root showed no conflict. The CLI ran in another session.
+
+- In the Space session, `read` returned a full-page screenshot of 520x9800
+  px. DeepSeek's Anthropic-compatible endpoint answered 400: "width and
+  height must each be at most 8192 pixels". A live probe confirmed the
+  limit: 520x8192 passes, 520x8193 fails. The image stays in history, so
+  every later request of the session failed the same way. GLM accepts it.
+- `read` checks only the file size, and the serializer sends the original
+  pixels. pi and opencode resize every image to 2000 px when it enters, but
+  neither recovers from this 400.
+- The Issue 335 recovery should have omitted the rejected image. Its
+  diagnostic called non-streaming `complete` with the model's full output
+  limit (128,000 for DeepSeek). The Anthropic SDK refuses a non-streaming
+  request without a `timeout` when `max_tokens` exceeds about 21,333
+  ("Streaming is required for operations that may take longer than 10
+  minutes"). The diagnostic failed locally, and the image stayed. The
+  non-streaming fallbacks have the same defect for every
+  Anthropic-compatible model with a large output limit.
+- The diagnostic failure was appended to the error text. Its "10 minutes"
+  matched the hard-timeout pattern, so a 400 was shown as "Provider request
+  timed out" and retried.
+- The omission placeholder does not say why the image was omitted, so the
+  model cannot retake a smaller one.
+
+### Resolution
+
+Three layers, all on the request only. The transcript and the file keep
+the original image.
+
+- Every request scales an image larger than 8000 px on a side down to 8000
+  px, for every provider. 8000 is Anthropic's limit and below DeepSeek's
+  8192. Local image validation now reports the pixel size, so no extra
+  decode is needed. The codec runs in the existing Photon worker. If the
+  codec fails, the original is sent. A text notice goes before a scaled
+  image: original and sent size, and the factor from its pixel coordinates
+  to the original's.
+- After each successful response, KodaX records the images that the
+  provider and model accepted, by the hash of the bytes sent. The record
+  lives in process memory. Scaling is deterministic, so the same image in a
+  later Run is still known.
+- When a provider answers 400, 413 or 422, the error is not about the
+  account, and the request has images the model never accepted, only those
+  images are retried at 2000 px. The error text does not need to mention
+  images: if the earlier requests passed, the new images are the suspects.
+  Accepted images keep their bytes, so the prompt cache stays valid. If
+  every image was accepted before and the error mentions images, all images
+  are capped at 2000 px instead. Each image is reduced at most once, and
+  the cap is not stored.
+- If the provider still rejects the request, the images it never accepted
+  are omitted. No diagnostic request is needed. The placeholder carries the
+  provider's reason and suggests a smaller or cropped copy. An image that
+  cannot be decoded keeps its own wording.
+- These steps need no model call, so they do not use a retry slot. The
+  Issue 335 diagnostic stays available for a failure they cannot explain.
+- The Anthropic SDK client now has an explicit 10-minute timeout, which
+  every request already received by default. That stops the SDK's local
+  refusal of large non-streaming requests, so the diagnostic and the
+  non-streaming fallbacks work again.
+- The resilience classifier decides a 4xx answer (except 408 and 429) by
+  its status. Timeout, connection and stream wording in the message no
+  longer turns it into a retried transport failure. Rate limits and the
+  thinking-replay repair are unchanged.
+
+Prompt eval (`benchmark/image-limit-prompt.eval.ts`, 36 calls,
+`ds/flash`, `kimi`, `zhipu/glm53flash`, blind review: recommend-ship):
+
+- Placeholder (rerun with the final wording, "rejected the request that
+  included this image"): with the old text, the model re-read the same
+  rejected file in 5 of 9 samples. With the new text, 0 of 9 (6 wins, 3
+  ties, 0 losses).
+- Scale notice: with the notice, the model cropped the original at once in
+  6 of 9 samples, against 1 of 9 without it. No arm made up the panel text.
+  One sample with the notice stopped and said it could not read the panel.
+
+Files changed:
+
+- `packages/llm/src/image-validation.ts`: pixel size, `scaleImageBytes`.
+- `packages/llm/src/providers/image-serialization.ts`: request-time fit,
+  notice, accepted-image record, `reducePreparedImages`,
+  `unacceptedPreparedImages`; `packages/llm/src/index.ts`.
+- `packages/llm/src/providers/anthropic.ts`: client timeout.
+- `packages/coding/src/resilience/text-recovery.ts`: 2000 px retry and
+  omission of new images, placeholder with reason, `acceptRequestImages`.
+- `packages/coding/src/resilience/classifier.ts`: status-first 4xx.
+- `packages/coding/src/agent-runtime/run-substrate.ts` and
+  `task-engine/_internal/managed-task/llm-adapter.ts`: record accepted
+  images; an image step does not spend a retry slot or the diagnostic.
+
+Tests:
+
+- `image-provider-fit.test.ts`: pixel size; 520x9800 sent as 424x8000 with
+  a notice and the file unchanged; JPEG stays JPEG; 8000 px unchanged;
+  admitted tool images scaled; the 2000 px cap applies only when an image
+  is larger and holds for the Run; no cap outside a Run; codec failure sends
+  the original.
+- `anthropic-non-streaming-timeout.test.ts`: DeepSeek non-streaming
+  `complete` at the full 128k output limit reaches the network.
+- `image-provider-fit.test.ts` (accepted images): only never-accepted
+  images are reduced, whatever the message says; accepted images stay
+  byte-identical; all images are reduced when all were accepted and the
+  message mentions images; acceptance is per model and carries across Runs.
+- `text-recovery.test.ts`: size retry before the diagnostic, also without
+  image wording; no image step for account 400, balance 400, 401 or 500;
+  omission of new images before the diagnostic; reason in the placeholder,
+  decode wording kept.
+- `text-recovery.integration.test.ts`: Direct and AMA retry a pixel-limit
+  rejection with 424x8000 and then 106x2000, and succeed; a new image still
+  rejected at 2000 px is dropped with no diagnostic request; with an
+  accepted image in history, only the new image is reduced.
+- `sdk-client.text-recovery.test.ts`: the model accepts the image in a first
+  round, so a later rejection still reaches the diagnostic, and input that
+  arrives during it is still respected.
+- `resilience.test.ts`: 4xx with timeout, connection or stream wording is
+  not retried; 408, 429 and thinking replay still are; 5xx still retried.
+
+Not covered: a live DeepSeek request with the real screenshot. The probe
+that measured the 8192 limit used a synthetic image. See
+`docs/test-guides/ISSUE_449_450_v0.7.97_REGRESSION_GUIDE.md`.
 
 ## Issue 448: Windows sandbox setup fails when UAC is approved late, and its failures have no codes
 
@@ -4955,6 +5161,8 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 450 | High | Resolved | A session whose history the provider keeps rejecting is never offered recovery | session recovery offer | unreleased (after `v0.7.97-rc.4`) | 2026-11-28 | 2026-11-28 |
+| 449 | High | Resolved | An image over the provider's pixel limit blocks every later request in the session | image `read` / history replay; recovery since Issue 335 | unreleased (after `v0.7.97-rc.4`) | 2026-11-28 | 2026-11-28 |
 | 448 | High | Resolved | Windows sandbox setup fails when UAC is approved late, and its failures have no codes | Windows v2 sandbox setup | unreleased (after `v0.7.97-rc.3`) | 2026-11-27 | 2026-11-27 |
 | 443 | High | Resolved | Windows Defender quarantines the sandbox helper that PowerShell writes into AppData | native artifact store V3 (PowerShell provisioning) | unreleased (after `v0.7.97-rc.2`) | 2026-11-25 | 2026-11-25 |
 | 442 | Medium | Resolved | Gemini and pi-messages replay another model's tool calls as text | `v0.7.97-alpha.12` | unreleased (after `v0.7.97-rc.1`) | 2026-11-23 | 2026-11-23 |
@@ -20743,12 +20951,24 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 318 (47 Open including 1 needs-info, 1 ready, 269 Resolved, 0 Partially Resolved, 1 Won't Fix)
+- Total: 320 (47 Open including 1 needs-info, 1 ready, 271 Resolved, 0 Partially Resolved, 1 Won't Fix)
 - Ready: 1 (420)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-28: Issues 449 and 450
+
+- Requests scale images over 8000 px on a side. When a provider rejects a
+  request, images the model never accepted are retried at 2000 px and then
+  omitted, whatever the error text says. The recovery placeholder carries
+  the provider's reason, the Anthropic client stops refusing large
+  non-streaming requests, and a 4xx is no longer reported as a timeout.
+  Unreleased.
+- When the same content rejection ends two Runs of a session in a row, the
+  failure is marked `historyRejected`. The REPL suggests `/recover`, and
+  Host clients can offer `sessions.recoverSession`. Unreleased.
 
 ### 2026-11-27: Issue 448
 

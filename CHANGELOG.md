@@ -6,6 +6,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- An image larger than the provider's pixel limit no longer blocks every
+  later request of a session (Issue 449). Requests scale images over 8000 px
+  on a side; the transcript and the file keep the original, and the model is
+  told the original size. When a provider rejects a request, the images the
+  model never accepted are retried at 2000 px and then omitted with the
+  provider's reason, even when the error text does not mention images.
+  Images it accepted before keep their bytes and the prompt cache. The
+  Anthropic-compatible client no longer refuses large non-streaming requests
+  locally, which had broken the older recovery, and a 4xx answer is no
+  longer reported as a timeout.
+- A session whose history the provider keeps rejecting can now be
+  recovered (Issue 450). When the same 400, 413 or 422 from the same
+  provider and model ends two Runs of a session in a row, the REPL suggests
+  `/recover`, and the Host reports `failureDetail.historyRejected: true` so
+  clients can offer `sessions.recoverSession`.
+
 ### Changed
 
 - The CLI bundle ceiling is now a regression tripwire rather than a fixed cap:

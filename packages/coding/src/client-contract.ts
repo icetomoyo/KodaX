@@ -1032,6 +1032,11 @@ export interface ClientRunFailureDetail {
   readonly providerErrorCode: string;
   readonly safeMessage: string;
   readonly skillName?: string;
+  /**
+   * The same Provider content rejection also ended the previous Run of this Session, so its
+   * history is the likely cause. Offer `sessions.recoverSession`; the Host changes nothing itself.
+   */
+  readonly historyRejected?: boolean;
 }
 
 /**

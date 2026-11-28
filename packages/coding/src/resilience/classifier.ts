@@ -19,6 +19,7 @@ import type {
   FailureStage,
   ResilienceClassification,
 } from './types.js';
+import { isHistoryRejected } from './history-rejection.js';
 
 // ============== Transient Message Patterns ==============
 
@@ -259,6 +260,15 @@ export function classifyResilienceError(
     };
   }
 
+  // A 4xx answer means the server read the request and rejected it. Timeout, connection or stream
+  // wording in its message, or in text appended locally, does not make it a transport failure
+  // (Issue 449: an appended diagnostic mentioning "10 minutes" turned a 400 into a timeout).
+  if (isClientRejection(error)) {
+    return matchesAny(message, REASONING_CONTENT_REQUIRED_PATTERNS)
+      ? reasoningContentRequired(currentStage)
+      : nonRetryableProviderError(currentStage);
+  }
+
   // 4. Stream incomplete — mid-stream failure
   if (
     error.name === 'StreamIncompleteError' ||
@@ -339,23 +349,10 @@ export function classifyResilienceError(
     // thinking blocks from history and retrying once. Single-shot retry
     // budget so we don't loop on a genuinely permanent issue. v0.7.28.
     if (matchesAny(message, REASONING_CONTENT_REQUIRED_PATTERNS)) {
-      return {
-        errorClass: 'reasoning_content_required',
-        failureStage: currentStage ?? 'before_first_delta',
-        retryable: true,
-        maxRetries: 1,
-        baseRetryDelay: 0,
-      };
+      return reasoningContentRequired(currentStage);
     }
 
-    // Permanent provider error
-    return {
-      errorClass: 'non_retryable_provider_error',
-      failureStage: currentStage ?? 'before_first_delta',
-      retryable: false,
-      maxRetries: 0,
-      baseRetryDelay: 0,
-    };
+    return nonRetryableProviderError(currentStage);
   }
 
   // 10. Generic error — check for transient patterns
@@ -393,6 +390,9 @@ export function isSessionRecoveryCandidateError(error: Error, messageCount: numb
   if (messageCount <= 0) {
     return false;
   }
+  if (isHistoryRejected(error)) {
+    return true;
+  }
 
   const message = collectErrorText(error);
   if (isAuthenticationOrConfigurationError(error)) {
@@ -410,6 +410,22 @@ export function isAuthenticationOrConfigurationError(error: Error): boolean {
 }
 
 // ============== Helpers ==============
+
+// 408 (request timeout) and 429 (rate limit) are 4xx answers that a retry can fix.
+function isClientRejection(error: Error): boolean {
+  const status = error instanceof KodaXProviderError ? error.metadata?.httpStatus : undefined;
+  return status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 429;
+}
+
+function reasoningContentRequired(currentStage?: FailureStage): ResilienceClassification {
+  return { errorClass: 'reasoning_content_required', failureStage: currentStage ?? 'before_first_delta',
+    retryable: true, maxRetries: 1, baseRetryDelay: 0 };
+}
+
+function nonRetryableProviderError(currentStage?: FailureStage): ResilienceClassification {
+  return { errorClass: 'non_retryable_provider_error', failureStage: currentStage ?? 'before_first_delta',
+    retryable: false, maxRetries: 0, baseRetryDelay: 0 };
+}
 
 function matchesAny(message: string, patterns: RegExp[]): boolean {
   return patterns.some(pattern => pattern.test(message));

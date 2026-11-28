@@ -1,23 +1,41 @@
 import { createHash } from 'node:crypto';
-import { inspectPreparedImage, getPreparedImageDiagnostic, getRejectedImageHash, KodaXProviderError, withProviderRequestCredential,
+import { inspectPreparedImage, getPreparedImageDiagnostic, getRejectedImageHash, KodaXProviderError, markPreparedImagesAccepted, reducePreparedImages,
+  unacceptedPreparedImages, withProviderRequestCredential,
   type KodaXBaseProvider, type KodaXMessage, type KodaXContentBlock, type KodaXToolResultImageItem,
   type KodaXReasoningRequest, type KodaXTokenUsage } from '@kodax-ai/llm';
 import { cleanupIncompleteToolCalls, validateAndFixToolHistory } from '@kodax-ai/agent';
 import { redactClassifierProjection } from '../tools/classifier-projection.js';
+import { ACCOUNT_FAILURE } from './history-rejection.js';
 
 type Image = Extract<KodaXContentBlock, { type: 'image' }> | KodaXToolResultImageItem;
-export interface TextRecoveryState { used: boolean; omitted: Set<Image>; sanitizeTools: boolean; sanitizeThinking: Set<KodaXContentBlock> }
-export const createTextRecoveryState = (): TextRecoveryState => ({ used: false, omitted: new Set(), sanitizeTools: false, sanitizeThinking: new Set() });
+/** `omitted` maps each omitted image to the placeholder text that replaces it. */
+export interface TextRecoveryState { used: boolean; omitted: Map<Image, string>; sanitizeTools: boolean; sanitizeThinking: Set<KodaXContentBlock> }
+export const createTextRecoveryState = (): TextRecoveryState => ({ used: false, omitted: new Map(), sanitizeTools: false, sanitizeThinking: new Set() });
 const digest = (messages: readonly KodaXMessage[]): string => createHash('sha256').update(JSON.stringify(messages)).digest('hex');
 const safeText = (text: string): string => redactClassifierProjection(text)
   .replace(/data:[^\s"']+;base64,[A-Za-z0-9+/=]+/g, '[inline media omitted]')
   .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '[control]');
 
+/** The provider's own words, so the model can make an image the provider accepts. */
+function rejectionReason(message: string): string {
+  const quoted = /"message"\s*:\s*"((?:[^"\\]|\\.)+)"/.exec(message)?.[1];
+  return safeText(quoted ?? message.split('\n')[0]!).replace(/\\"/g, '"').slice(0, 300);
+}
+
+function omissionText(reason: string | undefined): string {
+  return reason === undefined
+    ? '[Attachment omitted: this image cannot be decoded. Its contents are unavailable; re-extract/read it if needed. Other task requirements still apply.]'
+    : `[Attachment omitted: the provider rejected the request that included this image (${reason}). Its contents are unavailable. `
+      + 'If you still need it, make a copy the provider accepts, such as a smaller or cropped image, and read that. Other task requirements still apply.]';
+}
+
 /** Request-only projection. Untouched blocks retain their admitted identity and payload. */
 export function projectTextRecovery(messages: KodaXMessage[], state: TextRecoveryState): KodaXMessage[] {
   if (!state.omitted.size && !state.sanitizeTools && !state.sanitizeThinking.size) return messages;
-  const image = (block: Image): Image | Extract<KodaXContentBlock, { type: 'text' }> => state.omitted.has(block) ? { type: 'text',
-    text: '[Attachment omitted after verified image rejection. Its contents are unavailable; re-extract/read it if needed. Other task requirements still apply.]' } : block;
+  const image = (block: Image): Image | Extract<KodaXContentBlock, { type: 'text' }> => {
+    const text = state.omitted.get(block);
+    return text === undefined ? block : { type: 'text', text };
+  };
   let projected = messages.map(message => typeof message.content === 'string' ? message : { ...message,
     content: message.content.map(block => block.type === 'image' ? image(block)
       : block.type === 'tool_result' && Array.isArray(block.content) ? { ...block, content: block.content.map(
@@ -83,12 +101,18 @@ function waitForSignal<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> 
   });
 }
 
-function canDiagnose(input: TextRecoveryInput): boolean {
+
+/** The provider refused this request's content. */
+function isContentRejection(input: TextRecoveryInput, statuses: readonly number[]): boolean {
   const { error } = input;
-  return !input.state.used && input.attempt + 2 <= input.maxAttempts && !input.signal?.aborted
+  return !input.signal?.aborted && error instanceof KodaXProviderError
+    && statuses.includes(error.metadata?.httpStatus ?? 0) && !ACCOUNT_FAILURE.test(error.message);
+}
+
+function canDiagnose(input: TextRecoveryInput): boolean {
+  return !input.state.used && input.attempt + 2 <= input.maxAttempts
     && !input.hasPendingInputs?.() && input.provider.getCapabilityProfile().transport === 'native-api'
-    && error instanceof KodaXProviderError && [400, 422].includes(error.metadata?.httpStatus ?? 0)
-    && !/api[ _-]?key|authenticat|unauthori[sz]ed|credential|access denied|permission|quota|credits?|balance|billing|rate.?limit|鉴权|认证|密钥|权限|配额|余额|限流/i.test(error.message);
+    && isContentRejection(input, [400, 422]);
 }
 
 function toolRecords(messages: KodaXMessage[]): string[] {
@@ -113,12 +137,12 @@ function applyPlan(plan: unknown, input: TextRecoveryInput,
   context: Awaited<ReturnType<typeof diagnosticContext>>): boolean {
   if (!plan || typeof plan !== 'object' || !('action' in plan)) return false;
   const { state, error, messages } = input;
-  const candidate = { ...state, omitted: new Set(state.omitted), sanitizeThinking: new Set(state.sanitizeThinking) };
+  const candidate = { ...state, omitted: new Map(state.omitted), sanitizeThinking: new Set(state.sanitizeThinking) };
   if (plan.action === 'omit_attachment' && 'attachmentId' in plan && typeof plan.attachmentId === 'string') {
     const target = context.attachments.get(plan.attachmentId);
     const uniqueRejection = target?.rejected && [...context.attachments.values()].filter(item => item.rejected).length === 1;
     if (!target?.invalid && !uniqueRejection) return false;
-    candidate.omitted.add(target.block);
+    candidate.omitted.set(target.block, omissionText(target.invalid ? undefined : rejectionReason(error.message)));
   } else if (plan.action === 'repair_tool_history' && /tool[_ -]?(?:use|call|result)|tool_call_id/i.test(error.message)) {
     candidate.sanitizeTools = true;
   } else if (plan.action === 'sanitize_thinking' && /thinking|reasoning_content/i.test(error.message)) {
@@ -164,8 +188,39 @@ Error: ${safeText(error.message).slice(0, 4096)}\nHistory:\n`;
   return applyPlan(plan, input, context);
 }
 
-/** One diagnostic and one resume consume existing retry slots; no tools or writes are executed here. */
+const IMAGE_REJECTION_STATUSES = [400, 413, 422];
+const imageTarget = (provider: KodaXBaseProvider, model: string | undefined): string => `${provider.name}\0${model ?? provider.getModel()}`;
+
+/** Call after a successful response, so later rejections can tell new images from ones this model took. */
+export function acceptRequestImages(messages: readonly KodaXMessage[], provider: KodaXBaseProvider, model: string | undefined): void {
+  markPreparedImagesAccepted(messages, imageTarget(provider, model));
+}
+
+/**
+ * The rejection may be a pixel limit stricter than the default even when its text does not say so.
+ * Images this model has never accepted are retried at a smaller size first.
+ */
+async function tryReduceImages(input: TextRecoveryInput): Promise<boolean> {
+  return isContentRejection(input, IMAGE_REJECTION_STATUSES) && reducePreparedImages(input.messages,
+    imageTarget(input.provider, input.model), /image|图片|图像/i.test(input.error.message));
+}
+
+/** Last image step: drop images this model never accepted, without needing the error to locate them. */
+function tryOmitNewImages(input: TextRecoveryInput): boolean {
+  if (!isContentRejection(input, IMAGE_REJECTION_STATUSES)) return false;
+  const text = omissionText(rejectionReason(input.error.message));
+  const omitted = unacceptedPreparedImages(input.messages, imageTarget(input.provider, input.model))
+    .filter(block => !input.state.omitted.has(block));
+  for (const block of omitted) input.state.omitted.set(block, text);
+  return omitted.length > 0;
+}
+
+/**
+ * Image steps change the request at most once per image and need no model call, so they leave
+ * `state.used` false. One diagnostic and one resume consume existing retry slots; no tools or writes run here.
+ */
 export async function tryTextRecovery(input: TextRecoveryInput): Promise<boolean> {
+  if (await tryReduceImages(input) || tryOmitNewImages(input)) return true;
   if (!canDiagnose(input)) return false;
   input.state.used = true;
   const deadline = new AbortController();

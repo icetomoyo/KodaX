@@ -27,7 +27,7 @@ it('retains valid bytes when the decoder cannot start and validates after it rec
     notice: '[Local image validation unavailable (decoder_unavailable); original image bytes retained.]',
   });
   state.unavailable = false;
-  await expect(validateImageBytes(bytes)).resolves.toEqual({ status: 'valid', mediaType: 'image/webp' });
+  await expect(validateImageBytes(bytes)).resolves.toMatchObject({ status: 'valid', mediaType: 'image/webp' });
 });
 
 it('missing standalone assets do not classify a normal PNG as corrupt', async () => {
@@ -38,7 +38,7 @@ it('missing standalone assets do not classify a normal PNG as corrupt', async ()
   });
   vi.unstubAllEnvs();
   state.unavailable = false;
-  await expect(validateImageBytes(bytes)).resolves.toEqual({ status: 'valid', mediaType: 'image/png' });
+  await expect(validateImageBytes(bytes)).resolves.toMatchObject({ status: 'valid', mediaType: 'image/png' });
 });
 
 it('includes queue wait in the decoder deadline and releases its slot for later validation', async () => {
@@ -55,5 +55,5 @@ it('includes queue wait in the decoder deadline and releases its slot for later 
   expect(queued.status).toBe('unverified');
   expect(performance.now() - started).toBeLessThan(15_000);
   state.hang = false;
-  await expect(validateImageBytes(bytes)).resolves.toEqual({ status: 'valid', mediaType: 'image/png' });
+  await expect(validateImageBytes(bytes)).resolves.toMatchObject({ status: 'valid', mediaType: 'image/png' });
 }, 30_000);

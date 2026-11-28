@@ -47,6 +47,13 @@ export interface ClientRoundOutcome {
   readonly phase: string;
   readonly result?: KodaXResult;
   readonly error?: string;
+  readonly failureDetail?: { readonly historyRejected?: boolean };
+}
+
+/** Keeps the Host's history-rejection fact on the error, where the recovery offer reads it. */
+function outcomeError(outcome: ClientRoundOutcome & { readonly error: string }): Error {
+  const error = new Error(outcome.error);
+  return outcome.failureDetail?.historyRejected === true ? Object.assign(error, { historyRejected: true }) : error;
 }
 
 export interface InkClientPlane {
@@ -338,7 +345,7 @@ export async function followClientPlaneRun(input: {
       if (continuation === undefined) break;
       currentRunId = continuation;
     }
-    if (outcome.error !== undefined) throw new Error(outcome.error);
+    if (outcome.error !== undefined) throw outcomeError({ ...outcome, error: outcome.error });
     if (outcome.result !== undefined) return outcome.result;
     if (INTERRUPTED_RUN_PHASES.has(outcome.phase)) return interruptedPlaneResult(input.sessionId);
     throw new Error(outcome.error ?? `Run ${currentRunId} ended in phase '${outcome.phase}' without a result.`);
@@ -480,7 +487,7 @@ export async function runClientPlaneRound(input: {
     }
     const outcome = lastOutcome;
     if (outcome === undefined) throw new Error('The client-plane round ended without a run outcome.');
-    if (outcome.error !== undefined) throw new Error(outcome.error);
+    if (outcome.error !== undefined) throw outcomeError({ ...outcome, error: outcome.error });
     if (outcome.result !== undefined) return outcome.result;
     if (INTERRUPTED_RUN_PHASES.has(outcome.phase)) {
       return interruptedPlaneResult(input.sessionId);

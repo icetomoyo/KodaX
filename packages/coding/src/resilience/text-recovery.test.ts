@@ -265,3 +265,80 @@ it('does not erase later operations after a tool-history projection was activate
   input.messages.push({ role: 'assistant', content: [{ type: 'tool_use', id: 'later-write', name: 'write', input: { path: 'invoice' } }] });
   expect(JSON.stringify(projectTextRecovery(input.messages, input.state))).toContain('later-write');
 });
+
+// Issue 449: a pixel limit stricter than the default is fixed by smaller request images, not by a diagnosis.
+it('retries an image rejection with smaller images before spending the diagnostic', async () => {
+  const { input, complete } = imageSetup();
+  input.error = new KodaXProviderError('image width and height must each be at most 4096 pixels', input.provider.name, { httpStatus: 400 });
+  const reduce = vi.spyOn(images, 'reducePreparedImages').mockResolvedValue(true);
+  expect(await tryTextRecovery(input)).toBe(true);
+  expect(reduce).toHaveBeenCalledWith(input.messages, 'recovery-test\0test-model', true);
+  expect(complete).not.toHaveBeenCalled();
+  expect(input.state.used).toBe(false);
+  expect(projectTextRecovery(input.messages, input.state)).toBe(input.messages);
+});
+
+// The rejection text may not name the cause; images the provider never accepted are still the suspects.
+it('retries new images smaller even when the rejection does not mention images', async () => {
+  const { input, complete } = setup();
+  const reduce = vi.spyOn(images, 'reducePreparedImages').mockResolvedValue(true);
+  expect(await tryTextRecovery(input)).toBe(true);
+  expect(reduce).toHaveBeenCalledWith(input.messages, 'recovery-test\0test-model', false);
+  expect(complete).not.toHaveBeenCalled();
+});
+
+it.each([['API key signature invalid', 400], ['Insufficient balance', 400], ['bad image', 401], ['bad image', 500]])(
+  'leaves images alone for %s (HTTP %i)', async (message, status) => {
+    const { input } = imageSetup();
+    input.error = new KodaXProviderError(message, input.provider.name, { httpStatus: status });
+    const reduce = vi.spyOn(images, 'reducePreparedImages').mockResolvedValue(true);
+    const unaccepted = vi.spyOn(images, 'unacceptedPreparedImages');
+    await tryTextRecovery(input);
+    expect(reduce).not.toHaveBeenCalled();
+    expect(unaccepted).not.toHaveBeenCalled();
+  });
+
+it('omits images the provider never accepted when smaller copies are still rejected, before any diagnosis', async () => {
+  const { input, complete } = setup({ action: 'stop', reason: 'no evidence' });
+  const image = { type: 'image' as const, path: 'new-shot.png', mediaType: 'image/png' };
+  input.messages.push({ role: 'user', content: [image] });
+  input.error = new KodaXProviderError('400 {"error":{"message":"Request content is not supported","type":"invalid_request_error"}}',
+    input.provider.name, { httpStatus: 400 });
+  vi.spyOn(images, 'reducePreparedImages').mockResolvedValue(false);
+  const unaccepted = vi.spyOn(images, 'unacceptedPreparedImages').mockReturnValue([image]);
+  expect(await tryTextRecovery(input)).toBe(true);
+  expect(unaccepted).toHaveBeenCalledWith(input.messages, 'recovery-test\0test-model');
+  expect(complete).not.toHaveBeenCalled();
+  expect(input.state.used).toBe(false);
+  const projected = JSON.stringify(projectTextRecovery(input.messages, input.state));
+  expect(projected).not.toContain('new-shot.png');
+  expect(projected).toContain('Request content is not supported');
+  // Nothing new to omit: the diagnostic gets its turn.
+  input.messages = projectTextRecovery(input.messages, input.state);
+  unaccepted.mockReturnValue([]);
+  expect(await tryTextRecovery(input)).toBe(false);
+  expect(complete).toHaveBeenCalledOnce();
+});
+
+it('tells the model why a rejected image was omitted', async () => {
+  const { input } = imageSetup();
+  const bytes = Buffer.from('oversized-screenshot');
+  const dataHash = createHash('sha256').update(bytes).digest('hex');
+  vi.spyOn(images, 'reducePreparedImages').mockResolvedValue(false);
+  vi.spyOn(images, 'getPreparedImageDiagnostic').mockReturnValue({ dataHash, mediaType: 'image/png' });
+  input.error = new KodaXProviderError('400 {"error":{"message":"image at messages[0].content[0]: width and height must each be at most 4096 pixels","type":"invalid_request_error"}}',
+    input.provider.name, { httpStatus: 400 });
+  recordRejectedImage(input.error, { messages: [{ role: 'user', content: [{ type: 'image_url',
+    image_url: { url: `data:image/png;base64,${bytes.toString('base64')}` } }] }] });
+  expect(await tryTextRecovery(input)).toBe(true);
+  const projected = JSON.stringify(projectTextRecovery(input.messages, input.state));
+  expect(projected).toContain('width and height must each be at most 4096 pixels');
+  expect(projected).not.toContain('invalid_request_error');
+});
+
+it('tells the model that an omitted image could not be decoded', async () => {
+  vi.spyOn(images, 'inspectPreparedImage').mockResolvedValue({ validation: { status: 'invalid' }, dataHash: 'bad-image' });
+  const { input } = imageSetup();
+  expect(await tryTextRecovery(input)).toBe(true);
+  expect(JSON.stringify(projectTextRecovery(input.messages, input.state))).toContain('cannot be decoded');
+});

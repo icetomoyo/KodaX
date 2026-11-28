@@ -16125,6 +16125,44 @@ describe("createKodaXRuntime", () => {
     60_000,
   );
 
+  // Issue 450: a client can offer session recovery without parsing Provider text.
+  it("reports a repeated history rejection in failureDetail, also after restart", async () => {
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
+    const sessionsDir = path.join(tempRoot, "history-rejected-sessions");
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir, defaultProvider: "mock-provider" });
+    const session = await runtime.sessions.create({ title: "History rejected" });
+    const executionFailure: NonNullable<KodaXResult["failure"]> = {
+      source: "provider",
+      message: "Provider rejected the request. (KodaXProviderError; HTTP 400)",
+      safeMessage: "Provider rejected the request.",
+      errorClass: "non_retryable_provider_error",
+      provider: "deepseek",
+      model: "deepseek-v4",
+      requestPhase: "before_first_delta",
+      httpStatus: 400,
+    };
+    codingMock.runManagedTask.mockImplementation(async () => {
+      // The executor's own failure stays unmarked; the repeat is marked on the carrier the managed Worker attaches.
+      const error = Object.assign(new Error("deepseek API error: 400"), { executionFailure });
+      Object.defineProperty(error, "__kodaxProviderFailure", {
+        value: { ...executionFailure, historyRejected: true }, enumerable: false, configurable: true,
+      });
+      throw error;
+    });
+
+    const handle = await runtime.runs.start({ sessionId: session.id, prompt: "continue" });
+    const result = await handle.result;
+    expect(result).toMatchObject({ phase: "failed", failureDetail: { httpStatus: 400, historyRejected: true } });
+    await runtime.close();
+
+    const restored = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir, defaultProvider: "mock-provider" });
+    await expect(restored.runs.await(handle.runId)).resolves.toMatchObject({
+      phase: "failed",
+      failureDetail: { historyRejected: true },
+    });
+    await restored.close();
+  }, 60_000);
+
   it("preserves a managed-task blocked reason as a structured terminal fact", async () => {
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({

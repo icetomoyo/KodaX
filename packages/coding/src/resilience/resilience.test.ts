@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import { KodaXProviderError } from '@kodax-ai/llm';
 import { resolveResilienceConfig, DEFAULT_RESILIENCE_CONFIG } from './config.js';
 import { classifyResilienceError, isSessionRecoveryCandidateError } from './classifier.js';
+import { attachProviderFailure } from '../execution-failure.js';
 import { StableBoundaryTracker } from './stable-boundary.js';
 import { ProviderRecoveryCoordinator, sanitizeThinkingBlocks } from './recovery-coordinator.js';
 import { reconstructMessagesWithToolGuard } from './tool-guard.js';
@@ -231,6 +232,17 @@ describe('classifyResilienceError', () => {
     )).toBe(false);
   });
 
+  it('offers session recovery when the same rejection ended the previous Run too (Issue 450)', () => {
+    const error = new KodaXProviderError('deepseek API error: 400 invalid_request_error', 'deepseek', { httpStatus: 400 });
+    expect(isSessionRecoveryCandidateError(error, 5)).toBe(false);
+    attachProviderFailure(error, { source: 'provider', message: error.message, safeMessage: 'Provider rejected the request.',
+      errorClass: 'non_retryable_provider_error', requestPhase: 'before_first_delta', httpStatus: 400, historyRejected: true });
+    expect(isSessionRecoveryCandidateError(error, 5)).toBe(true);
+    expect(isSessionRecoveryCandidateError(error, 0)).toBe(false);
+    // A Host client receives the flag as data on its own error.
+    expect(isSessionRecoveryCandidateError(Object.assign(new Error('Provider rejected the request.'), { historyRejected: true }), 5)).toBe(true);
+  });
+
   it('classifies generic aborted error as retryable connection_failure', () => {
     const error = new Error('The request was aborted by the server');
     const result = classifyResilienceError(error);
@@ -320,6 +332,30 @@ describe('classifyResilienceError', () => {
     const error = new KodaXProviderError('zhipu-coding API error: 连接被终止', 'zhipu-coding');
     const result = classifyResilienceError(error);
     expect(result.errorClass).toBe('connection_failure');
+    expect(result.retryable).toBe(true);
+  });
+
+  // Issue 449: a rejected request answered by the server is not a transport failure, whatever
+  // wording the message carries. Here an appended local diagnostic mentioned "10 minutes".
+  it.each([
+    'deepseek API error: 400 image too large. Recovery diagnostic failed: Streaming is required for operations that may take longer than 10 minutes.',
+    'custom API error: 400 upstream timed out reading the attachment',
+    'custom API error: 422 request aborted: invalid schema',
+    'custom API error: 400 stream interrupted by invalid input',
+  ])('keeps a 4xx answer non-retryable despite transport wording: %s', (message) => {
+    const result = classifyResilienceError(new KodaXProviderError(message, 'custom', { httpStatus: Number(/\d{3}/.exec(message)![0]) }));
+    expect(result).toMatchObject({ errorClass: 'non_retryable_provider_error', retryable: false });
+  });
+
+  it('still recognizes 4xx rate limits, request timeouts and thinking replay rejections', () => {
+    const classify = (message: string, httpStatus: number) => classifyResilienceError(new KodaXProviderError(message, 'custom', { httpStatus })).errorClass;
+    expect(classify('too many requests', 429)).toBe('rate_limit');
+    expect(classify('request timed out', 408)).toBe('request_timeout');
+    expect(classify('The reasoning_content in the thinking mode must be passed back', 400)).toBe('reasoning_content_required');
+  });
+
+  it('still retries a transport failure that carries a 5xx status', () => {
+    const result = classifyResilienceError(new KodaXProviderError('upstream timed out', 'custom', { httpStatus: 504 }));
     expect(result.retryable).toBe(true);
   });
 });

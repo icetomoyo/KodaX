@@ -80,8 +80,17 @@ export async function createAnthropicSdkClient(
   options: ConstructorParameters<typeof Anthropic>[0],
 ): Promise<Anthropic> {
   const { default: AnthropicSdk } = await import('@anthropic-ai/sdk');
-  return new AnthropicSdk({ ...options, fetch: observeProviderFetch(options?.fetch ?? requestExtensionFetch(globalThis.fetch)) });
+  return new AnthropicSdk({
+    ...options,
+    timeout: options?.timeout ?? SDK_DEFAULT_TIMEOUT_MS,
+    fetch: observeProviderFetch(options?.fetch ?? requestExtensionFetch(globalThis.fetch)),
+  });
 }
+
+// Every request already gets the SDK's 10-minute default. Setting it on the client explicitly stops the
+// SDK from refusing, before any network call, a non-streaming request whose max_tokens implies more
+// than 10 minutes (about 21,333 tokens). That refusal broke the rejection diagnostic (Issue 449).
+const SDK_DEFAULT_TIMEOUT_MS = 10 * 60_000;
 
 interface AnthropicRequestOptions {
   readonly signal?: AbortSignal;

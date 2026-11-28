@@ -220,6 +220,12 @@ it works too, but `imageInput` is the one-field version:
 Leave `imageInput` unset for text-only models — image artifacts are then
 rejected with `MODEL_INPUT_UNSUPPORTED` before the request is sent.
 
+KodaX sends an image over 8000 px on a side scaled down; the file and the
+transcript keep the original. If the model rejects a request (HTTP 400, 413
+or 422) that carries an image it has not accepted before, KodaX retries that
+image at 2000 px, then leaves it out with the provider's reason. A model with
+a lower pixel limit therefore needs no extra setting.
+
 Built-in vision-capable aliases (Anthropic, OpenAI, Kimi, Qwen, Zhipu, MiniMax,
 MiMo, Ark, plus Gemini-CLI) already ship with image input enabled. On the
 built-in `deepseek` alias the default `deepseek-flash` (DeepSeek-V4.1-Flash)

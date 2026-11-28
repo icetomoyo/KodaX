@@ -8,6 +8,7 @@ import { runManagedTaskViaRunner } from '../task-engine/runner-driven.js';
 import { _resetMessageQueueForTests, actorQueueId, getMessageQueue } from '@kodax-ai/agent';
 import { CodingActorSession } from './actor-runtime.js';
 import * as validation from '../../../llm/src/image-validation.js';
+import * as images from '../../../llm/src/providers/image-serialization.js';
 
 let directory: string | undefined;
 afterEach(async () => {
@@ -15,7 +16,8 @@ afterEach(async () => {
   if (directory) { expect(path.dirname(directory)).toBe(tmpdir()); await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
-it.each(['Direct', 'AMA'] as const)('%s diagnoses an image rejected after admission and continues without changing raw history', async runtime => {
+// A new image in a rejected request is dropped without a diagnostic request (Issue 449).
+it.each(['Direct', 'AMA'] as const)('%s omits a new image the provider rejects and continues without changing raw history', async runtime => {
   directory = await mkdtemp(path.join(tmpdir(), 'kodax-text-recovery-runtime-'));
   vi.stubEnv('KODAX_HOME', directory); vi.stubEnv('TEXT_RECOVERY_KEY', 'test');
   const file = path.join(directory, 'header.png');
@@ -34,19 +36,15 @@ it.each(['Direct', 'AMA'] as const)('%s diagnoses an image rejected after admiss
     }
     return { textBlocks: [{ type: 'text', text: '六万元，每项两万元，启动前支付。' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };
   });
-  const diagnose = vi.spyOn(provider, 'complete').mockImplementation(async messages => {
-    expect(messages.every(message => typeof message.content === 'string')).toBe(true);
-    expect(JSON.stringify(messages)).toContain('m0/b0');
-    return { textBlocks: [{ type: 'text', text: '{"action":"omit_attachment","attachmentId":"m0/b0","reason":"local inspection confirms invalid image"}' }],
-      thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };
-  });
+  const diagnose = vi.spyOn(provider, 'complete');
   registerModelProvider('text-recovery', () => provider);
   const result = await (runtime === 'Direct' ? runLeafAgent : runManagedTaskViaRunner)({ provider: 'text-recovery', reasoningMode: 'off', maxIter: 2,
     context: { executionCwd: directory, managedTaskWorkspaceDir: directory }, session: { initialMessages: history } }, '总价六万元，每项两万元，启动前支付');
   expect(result.success).toBe(true);
-  expect(diagnose).toHaveBeenCalledOnce(); expect(stream).toHaveBeenCalledTimes(2);
-  expect(stream.mock.calls[1]![4]).toMatchObject({ singleAttempt: true });
-  expect(stream.mock.calls.slice(1).every(call => !JSON.stringify(call[0]).includes('"type":"image"'))).toBe(true);
+  expect(diagnose).not.toHaveBeenCalled(); expect(stream).toHaveBeenCalledTimes(2);
+  expect(stream.mock.calls[1]![4]).not.toMatchObject({ singleAttempt: true });
+  expect(JSON.stringify(stream.mock.calls[1]![0])).not.toContain('"type":"image"');
+  expect(JSON.stringify(stream.mock.calls[1]![0])).toContain('图片输入格式/解析错误');
   expect(history).toEqual(original);
   expect(await readFile(file)).toEqual(await readFile('tests/fixtures/images/valid-png.png'));
 });
@@ -54,6 +52,8 @@ it.each(['Direct', 'AMA'] as const)('%s diagnoses an image rejected after admiss
 for (const runtime of ['Direct', 'AMA'] as const) {
   for (const outcome of ['resume', 'queued-input', 'second-rejection'] as const) {
     it(`${runtime} uses actual wire image evidence and handles ${outcome}`, async () => {
+      // An image this model accepted before is not dropped by the image fallback, so only the diagnostic can.
+      vi.spyOn(images, 'unacceptedPreparedImages').mockReturnValue([]);
       directory = await mkdtemp(path.join(tmpdir(), 'kodax-text-recovery-wire-'));
       vi.stubEnv('KODAX_HOME', directory); vi.stubEnv('TEXT_RECOVERY_KEY', 'test');
       const file = path.join(directory, 'header.png');
@@ -109,3 +109,105 @@ for (const runtime of ['Direct', 'AMA'] as const) {
     });
   }
 }
+
+// Issue 449: an unknown pixel limit below the 8000 px default. The run retries once with 2000 px request
+// images; history and the file keep the original, and no diagnostic request is spent.
+it.each(['Direct', 'AMA'] as const)('%s retries a pixel-limit rejection with smaller request images', async runtime => {
+  directory = await mkdtemp(path.join(tmpdir(), 'kodax-image-limit-runtime-'));
+  vi.stubEnv('KODAX_HOME', directory); vi.stubEnv('TEXT_RECOVERY_KEY', 'test');
+  const { Jimp } = await import('jimp');
+  const { imageSize } = await import('image-size');
+  const bytes = Buffer.from(await new Jimp({ width: 520, height: 9800, color: 0x3366ccff }).getBuffer('image/png'));
+  const file = path.join(directory, 'full-page.png');
+  await writeFile(file, bytes);
+  const history = [{ role: 'user' as const, content: [{ type: 'image' as const, path: file }] }];
+  const original = structuredClone(history);
+  const provider = createCustomProvider({ name: 'pixel-limit', protocol: 'openai', model: 'vision',
+    baseUrl: 'https://unused.invalid', apiKeyEnv: 'TEXT_RECOVERY_KEY', imageInput: true });
+  const sent: { width?: number; height?: number }[] = [];
+  const create = vi.fn(async (request: { stream?: boolean; messages: { content: unknown }[] }) => {
+    if (!request.stream) throw new Error('Unexpected diagnostic request');
+    const url = /data:image\/png;base64,([A-Za-z0-9+/=]+)/.exec(JSON.stringify(request.messages))?.[1];
+    const size = url ? imageSize(Buffer.from(url, 'base64')) : {};
+    sent.push(size);
+    if (Math.max(size.width ?? 0, size.height ?? 0) > 4096) {
+      throw Object.assign(new Error('image width and height must each be at most 4096 pixels'), { status: 400 });
+    }
+    return (async function* () { yield { choices: [{ delta: { content: 'The page is blue.' }, finish_reason: 'stop' }] }; })();
+  });
+  Reflect.set(provider, '_client', { chat: { completions: { create } } });
+  registerModelProvider('pixel-limit', () => provider);
+  const result = await (runtime === 'Direct' ? runLeafAgent : runManagedTaskViaRunner)({ provider: 'pixel-limit',
+    reasoningMode: 'off', maxIter: 2, lsp: false, session: { initialMessages: history },
+    context: { executionCwd: directory, managedTaskWorkspaceDir: directory } }, 'What colour is the page?');
+  expect(result.success).toBe(true);
+  expect(sent).toEqual([{ width: 424, height: 8000, type: 'png' }, { width: 106, height: 2000, type: 'png' }]);
+  expect(history).toEqual(original);
+  expect(await readFile(file)).toEqual(bytes);
+});
+
+async function pngFile(name: string, width: number, height: number): Promise<string> {
+  const { Jimp } = await import('jimp');
+  const file = path.join(directory!, name);
+  await writeFile(file, Buffer.from(await new Jimp({ width, height, color: 0x3366ccff }).getBuffer('image/png')));
+  return file;
+}
+
+async function sizesSent(request: { messages: { content: unknown }[] }): Promise<string[]> {
+  const { imageSize } = await import('image-size');
+  return [...JSON.stringify(request.messages).matchAll(/data:image\/png;base64,([A-Za-z0-9+/=]+)/g)]
+    .map(match => imageSize(Buffer.from(match[1]!, 'base64'))).map(size => `${size.width}x${size.height}`);
+}
+
+// Issue 449: the rejection names no cause and even the 2000 px copy is refused. The image this model
+// never accepted is dropped with the provider's reason; no diagnostic request is spent.
+it.each(['Direct', 'AMA'] as const)('%s drops a new image the provider still rejects at 2000 px', async runtime => {
+  directory = await mkdtemp(path.join(tmpdir(), 'kodax-image-omit-runtime-'));
+  vi.stubEnv('KODAX_HOME', directory); vi.stubEnv('TEXT_RECOVERY_KEY', 'test');
+  const history = [{ role: 'user' as const, content: [{ type: 'image' as const, path: await pngFile('full-page.png', 520, 9800) }] }];
+  const provider = createCustomProvider({ name: `image-omit-${runtime}`, protocol: 'openai', model: 'vision',
+    baseUrl: 'https://unused.invalid', apiKeyEnv: 'TEXT_RECOVERY_KEY', imageInput: true });
+  const sent: string[][] = [];
+  const create = vi.fn(async (request: { stream?: boolean; messages: { content: unknown }[] }) => {
+    if (!request.stream) throw new Error('Unexpected diagnostic request');
+    sent.push(await sizesSent(request));
+    if (sent.at(-1)!.length) throw Object.assign(new Error('Request rejected: unsupported content'), { status: 400 });
+    expect(JSON.stringify(request.messages)).toContain('Request rejected: unsupported content');
+    return (async function* () { yield { choices: [{ delta: { content: 'I cannot see that image.' }, finish_reason: 'stop' }] }; })();
+  });
+  Reflect.set(provider, '_client', { chat: { completions: { create } } });
+  registerModelProvider(provider.name, () => provider);
+  const result = await (runtime === 'Direct' ? runLeafAgent : runManagedTaskViaRunner)({ provider: provider.name,
+    reasoningMode: 'off', maxIter: 2, lsp: false, session: { initialMessages: history },
+    context: { executionCwd: directory, managedTaskWorkspaceDir: directory } }, 'What colour is the page?');
+  expect(result.success).toBe(true);
+  expect(sent).toEqual([['424x8000'], ['106x2000'], []]);
+});
+
+// Acceptance carries across runs: only the image this model has not answered before is reduced, so the
+// accepted image keeps its bytes (and the cached prefix).
+it.each(['Direct', 'AMA'] as const)('%s reduces only the new image when an accepted one is in history', async runtime => {
+  directory = await mkdtemp(path.join(tmpdir(), 'kodax-image-accepted-runtime-'));
+  vi.stubEnv('KODAX_HOME', directory); vi.stubEnv('TEXT_RECOVERY_KEY', 'test');
+  const wide = { type: 'image' as const, path: await pngFile('wide.png', 3000, 600) };
+  const tall = { type: 'image' as const, path: await pngFile('full-page.png', 520, 9800) };
+  const provider = createCustomProvider({ name: `image-accepted-${runtime}`, protocol: 'openai', model: 'vision',
+    baseUrl: 'https://unused.invalid', apiKeyEnv: 'TEXT_RECOVERY_KEY', imageInput: true });
+  const sent: string[][] = [];
+  const create = vi.fn(async (request: { stream?: boolean; messages: { content: unknown }[] }) => {
+    if (!request.stream) throw new Error('Unexpected diagnostic request');
+    sent.push(await sizesSent(request));
+    if (sent.at(-1)!.some(size => size.split('x').some(side => Number(side) > 4096))) {
+      throw Object.assign(new Error('Request rejected: unsupported content'), { status: 400 });
+    }
+    return (async function* () { yield { choices: [{ delta: { content: 'Done.' }, finish_reason: 'stop' }] }; })();
+  });
+  Reflect.set(provider, '_client', { chat: { completions: { create } } });
+  registerModelProvider(provider.name, () => provider);
+  const run = (initialMessages: { role: 'user'; content: (typeof wide)[] }[]) => (runtime === 'Direct' ? runLeafAgent : runManagedTaskViaRunner)({
+    provider: provider.name, reasoningMode: 'off', maxIter: 2, lsp: false, session: { initialMessages },
+    context: { executionCwd: directory, managedTaskWorkspaceDir: directory } }, 'Describe the images.');
+  expect((await run([{ role: 'user', content: [wide] }])).success).toBe(true);
+  expect((await run([{ role: 'user', content: [wide, tall] }])).success).toBe(true);
+  expect(sent).toEqual([['3000x600'], ['3000x600', '424x8000'], ['3000x600', '106x2000']]);
+});

@@ -7,7 +7,8 @@ import { Worker } from 'node:worker_threads';
 
 type ImageMediaType = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
 export type ImageValidation =
-  | { status: 'valid'; mediaType: ImageMediaType }
+  // Pixel size is present when this module decoded the image; callers that build a verdict may omit it.
+  | { status: 'valid'; mediaType: ImageMediaType; width?: number; height?: number }
   | { status: 'invalid' }
   | { status: 'unverified'; reason: 'unsupported_format' | 'decoder_unavailable' | 'processing_limit'; mediaType?: ImageMediaType };
 
@@ -41,6 +42,21 @@ if (photon) {
 }
 `;
 
+// Scales one already validated image. Any failure answers null, and the caller keeps the original bytes.
+const SCALE_WORKER = `
+const { parentPort, workerData } = require('node:worker_threads');
+let image, scaled;
+try {
+  const photon = require(workerData.modulePath);
+  image = photon.PhotonImage.new_from_byteslice(workerData.bytes);
+  scaled = photon.resize(image, workerData.width, workerData.height, photon.SamplingFilter.Lanczos3);
+  const out = workerData.jpeg ? scaled.get_bytes_jpeg(90) : scaled.get_bytes();
+  parentPort.postMessage(out, [out.buffer]);
+} catch { parentPort.postMessage(null); }
+finally { if (scaled) scaled.free(); if (image) image.free(); }
+`;
+const MAX_SCALE_MS = 30_000;
+
 function codecPath(): string | undefined {
   const sidecar = path.join(path.dirname(process.execPath), 'image-codec', 'photon_rs.js');
   if (process.env.KODAX_BUNDLED === 'true') return existsSync(sidecar) ? sidecar : undefined;
@@ -51,7 +67,43 @@ function codecPath(): string | undefined {
   }
 }
 
-async function decode(bytes: Buffer, mediaType: ImageMediaType, remainingMs: number): Promise<ImageValidation> {
+/** One codec worker at a time bounds memory; queueing time counts against the caller's deadline. */
+function serial<T>(task: () => Promise<T>): Promise<T> {
+  const run = (decoderTail ?? Promise.resolve()).then(task);
+  const tail = run.then(() => undefined, () => undefined);
+  decoderTail = tail;
+  void tail.then(() => { if (decoderTail === tail) decoderTail = undefined; });
+  return run;
+}
+
+/** Re-encodes a valid image at the given size: JPEG stays JPEG, every other format becomes PNG. */
+export function scaleImageBytes(bytes: Buffer, mediaType: string, width: number, height: number): Promise<Buffer | undefined> {
+  const deadline = performance.now() + MAX_SCALE_MS;
+  return runLocalValidation(() => serial(() => new Promise<Buffer | undefined>((resolve) => {
+    const modulePath = codecPath();
+    const remainingMs = deadline - performance.now();
+    if (!modulePath || remainingMs <= 0) { resolve(undefined); return; }
+    let worker: Worker;
+    try { worker = new Worker(SCALE_WORKER, { eval: true, workerData: { modulePath, bytes: Buffer.from(bytes), width, height,
+      jpeg: mediaType === 'image/jpeg' }, resourceLimits: { maxOldGenerationSizeMb: 128 } }); }
+    catch { resolve(undefined); return; }
+    let settled = false;
+    const finish = (result: unknown): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      const scaled = result instanceof Uint8Array && result.length ? Buffer.from(result) : undefined;
+      void worker.terminate().then(() => resolve(scaled), () => resolve(scaled));
+    };
+    const timer = setTimeout(() => finish(null), remainingMs);
+    worker.once('message', finish);
+    worker.once('error', () => finish(null));
+    worker.once('exit', () => finish(null));
+  })));
+}
+
+async function decode(bytes: Buffer, mediaType: ImageMediaType, remainingMs: number,
+  size: { width: number; height: number }): Promise<ImageValidation> {
   if (remainingMs <= 0) return { status: 'unverified', reason: 'processing_limit', mediaType };
   const modulePath = codecPath();
   if (!modulePath) return { status: 'unverified', reason: 'decoder_unavailable', mediaType };
@@ -66,7 +118,7 @@ async function decode(bytes: Buffer, mediaType: ImageMediaType, remainingMs: num
       settled = true;
       clearTimeout(timer);
       // Do not release the serial decoder slot until the worker has actually exited.
-      void worker.terminate().then(() => resolve(status === 'valid' ? { status, mediaType }
+      void worker.terminate().then(() => resolve(status === 'valid' ? { status, mediaType, ...size }
         : status === 'invalid' ? { status } : { status: 'unverified', reason: 'decoder_unavailable', mediaType }),
       () => resolve({ status: 'unverified', reason: 'decoder_unavailable', mediaType }));
     };
@@ -94,11 +146,8 @@ async function inspect(bytes: Buffer): Promise<ImageValidation> {
     return { status: 'unverified', reason: 'processing_limit', mediaType };
   }
   // Queueing consumes the same budget: stalled inputs cannot each add another full timeout.
-  const task = (decoderTail ?? Promise.resolve()).then(() => decode(bytes, mediaType, deadline - performance.now()));
-  const tail = task.then(() => undefined, () => undefined);
-  decoderTail = tail;
-  void tail.then(() => { if (decoderTail === tail) decoderTail = undefined; });
-  return task;
+  const size = { width: dimensions.width, height: dimensions.height };
+  return serial(() => decode(bytes, mediaType, deadline - performance.now(), size));
 }
 
 /** Validate actual bytes without converting valid images or changing their metadata/animation. */

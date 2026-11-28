@@ -37,6 +37,7 @@ import {
 import { resolveProvider } from './providers/index.js';
 import { reshapeToUserConversation } from './task-engine/_internal/round-boundary.js';
 import { readFailureResult } from './execution-failure.js';
+import { recordRunError, recordRunResult } from './resilience/history-rejection.js';
 import { runManagedTaskViaRunner } from './task-engine/runner-driven.js';
 import {
   getAgentRepoRoutingSignals,
@@ -172,7 +173,8 @@ export async function runManagedTask(
       deriveRunScopedConfig(runtimeOptions),
       async () => {
         const result = await executeRunManagedTask(runtimeOptions, prompt);
-        const reshaped = reshapeToUserConversation(result, runtimeOptions, prompt);
+        const reshaped = recordRunResult(runtimeOptions.session?.id,
+          reshapeToUserConversation(result, runtimeOptions, prompt));
         // FEATURE_247 (R1): echo the SDK-consumer profile back so the embedder can
         // confirm which profile actually ran (Partner vs default Coding Agent).
         // Pure passthrough — omitted entirely for the default path.
@@ -183,6 +185,7 @@ export async function runManagedTask(
     );
   } catch (error: unknown) {
     failure = error;
+    recordRunError(runtimeOptions.session?.id, error);
     throw error;
   } finally {
     await awaitRuntimeSkillInvocationPolicy(runtimeOptions, failure);

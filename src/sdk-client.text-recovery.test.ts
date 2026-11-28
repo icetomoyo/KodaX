@@ -47,6 +47,14 @@ it.each(['current', 'other'] as const)
     let diagnostics = 0;
     let streams = 0;
     const create = vi.fn(async (request: { stream?: boolean; messages: { content: unknown }[] }) => {
+      // The first round and its background review succeed, so the model has accepted the image.
+      // Rejecting an image it never accepted would omit it without the diagnostic under test.
+      const sent = JSON.stringify(request.messages);
+      if (request.stream && !sent.includes('Look at it again.') && !sent.includes('Hold the unrelated Session')) {
+        return (async function* () {
+          yield { choices: [{ delta: { content: 'A small test image.' }, finish_reason: 'stop' }] };
+        })();
+      }
       if (!request.stream) {
         diagnostics++;
         const text = JSON.stringify(request.messages);
@@ -80,13 +88,15 @@ it.each(['current', 'other'] as const)
       })();
     });
     Reflect.set(provider, '_client', { chat: { completions: { create } } });
+    const seen = await client.inputs.submit({ sessionId: session.id, inputId: 'warmup', text: 'Describe this image.',
+      inputArtifacts: [{ kind: 'image', path: imagePath, mediaType: 'image/png' }] });
+    expect((await client.runs.await(seen.runId!)).phase).toBe('completed');
     if (queueScope === 'other') {
       await client.inputs.submit({ sessionId: queueSession.id, inputId: 'other-initial', text: 'Hold the unrelated Session.' });
       await otherEntered;
       expect(otherStarted).toBe(true);
     }
-    const accepted = await client.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Describe this image.',
-      inputArtifacts: [{ kind: 'image', path: imagePath, mediaType: 'image/png' }] });
+    const accepted = await client.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Look at it again.' });
     expect(accepted.runId).toBeDefined();
     const settled = await client.runs.await(accepted.runId!);
     expect(diagnostics).toBe(1);

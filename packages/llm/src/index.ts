@@ -365,7 +365,7 @@ export type {
 export { validateImageBytes } from './image-validation.js';
 export type { ImageValidation } from './image-validation.js';
 export { prepareHistoryImages, prepareValidatedImageBlock, withPreparedImageHistory } from './providers/image-serialization.js';
-export { inspectPreparedImage } from './providers/image-serialization.js';
+export { inspectPreparedImage, markPreparedImagesAccepted, reducePreparedImages, unacceptedPreparedImages } from './providers/image-serialization.js';
 export { getRejectedImageHash } from './providers/rejected-image.js';
 export { getPreparedImageDiagnostic, validateImageBytesInRun, UNSUPPORTED_MODEL_IMAGE_PLACEHOLDER } from './providers/image-serialization.js';
 export { MISSING_IMAGE_PLACEHOLDER, UNSUPPORTED_TOOL_RESULT_IMAGE_PLACEHOLDER } from './providers/image-serialization.js';

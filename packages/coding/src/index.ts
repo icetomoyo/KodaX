@@ -983,6 +983,7 @@ export {
   classifyResilienceError,
   isSessionRecoveryCandidateError,
 } from './resilience/classifier.js';
+export { isHistoryRejected } from './resilience/history-rejection.js';
 
 export {
   StableBoundaryTracker,

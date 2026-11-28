@@ -1775,6 +1775,7 @@ function runtimeFailureDetailSchema(): RuntimeDaemonJsonSchema {
     requestPhase: { type: 'string', maxLength: 100 },
     elapsedMs: { type: 'integer', minimum: 0, maximum: 86_400_000 },
     contextOverflow: contextOverflowFactsSchema(),
+    historyRejected: { enum: [true] },
     contextTokens: {
       type: 'object',
       properties: {
