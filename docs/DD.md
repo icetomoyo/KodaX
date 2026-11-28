@@ -525,10 +525,13 @@ Only `llm`, `agent`, `coding`, and `repl` are workspace package build roots.
 ### CLI bundle budget
 
 `scripts/build-bundle.mjs` fails the build when `dist/kodax_cli.js` exceeds
-`5 * 1024 * 1024 - 49 * 1024` bytes (5,071 KiB = 5,192,704 bytes). The builder
+`5 * 1024 * 1024 + 9 * 1024` bytes (5,129 KiB = 5,252,096 bytes). The builder
 and `tests/bundled-manual-budget.test.mjs` use the same expression. There is no
-environment override and no automatic growth; the outer limit stays 5 MiB. The
-bare-resume entry (`dist/kodax_resume.js`) is limited to 160 KiB and has its own
+environment override and no automatic growth. The ceiling is a regression
+tripwire, not a capacity cap ([ADR-086](ADR.md#adr-086-the-cli-bundle-ceiling-is-a-regression-tripwire-with-a-64-kib-reserve)):
+it is the largest release CLI build plus a 64 KiB reserve, rounded up to a
+whole KiB. The CLI is emitted as UTF-8 (`charset: 'utf8'`), so non-ASCII text
+is not escaped; lone surrogates stay escaped. The bare-resume entry (`dist/kodax_resume.js`) is limited to 160 KiB and has its own
 heavy-import and input boundaries.
 
 Checks that run before the size check: the eager heavy-import boundary
@@ -597,26 +600,27 @@ in `client-runtime-adapter.ts`, `execution-services.ts` and
 `workflows/workflow-runner.test.ts`, `tests/prompt-spec-descendants.test.ts`
 and `src/sdk-prompt-spec.test.ts`.
 
-To change the ceiling:
+Reset the ceiling when the build fails:
 
 1. Reproduce the failure on the real builder.
 2. Build a paired baseline that differs only in the changed modules, with the
    same esbuild options, input count and external import set.
-3. Measure the native Windows manifest plus five-manifest builds selected from
-   Linux and Windows hosts. The synthesized non-Windows manifests check size
-   only, not native execution.
-4. Pick the smallest whole-KiB ceiling that fits, and attribute growth per
-   module.
-5. Prefer moving complete data to packaged resources over trimming behavior or
-   lowering the reserve.
+3. Attribute the growth per module. A single unexpected block, such as a
+   dependency bundled by mistake or an optional path imported eagerly, is the
+   regression the tripwire exists for. Fix it rather than reset.
+4. Move what can load on demand, and move complete data to packaged resources.
+   Do not trim behavior to pass the gate.
+5. If the rest is normal growth, set the ceiling to the largest CLI build in
+   the latest release run plus 64 KiB, rounded up to a whole KiB, and record
+   the reason in ADR-086.
 
-The release CI gate on the real universal artifact is authoritative. After
-beta.4 the five-native universal build had 356 bytes of headroom (CHANGELOG).
-For beta.5, loading optional CLI integrations, ACP and hosted A2A on demand
-left 28,034 bytes in the five-manifest composition measured at the next-dev
-integration ([record](designs/next-dev-integration-execution-2026-11-09.md)).
-v0.7.99 targets a reserve of at least 64 KiB
-([release notes](release.md), `docs/features/v0.7.99.md`).
+Lower the ceiling the same way when a removal shrinks the CLI by more than
+64 KiB, such as the v1 SDK removal or the legacy memory deletion, so the
+freed space does not drift back unnoticed.
+
+The release CI gate on the real universal artifact is authoritative. The
+v0.7.97-rc.4 release run built the CLI at up to 5064 kB, which sets the
+current ceiling.
 
 ## 3. Main Entry Points
 

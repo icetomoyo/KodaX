@@ -375,8 +375,8 @@ the SDK contracts, the allowance first became 5 MiB + 16 KiB from the committed
 5 MiB baseline; 5 MiB + 8 KiB was an intermediate local allowance. The subsequent
 Host view-read close fence brought the measured CLI to 5,259,331 bytes, 67 bytes
 above that allowance. A further 1 KiB brings the final budget to 5 MiB + 17 KiB.
-(Superseded: the CLI limit is now 5 MiB − 49 KiB; see
-[DD CLI bundle budget](DD.md#cli-bundle-budget).)
+(Superseded: the CLI limit is now a tripwire, 5 MiB + 9 KiB; see
+ADR-086 and [DD CLI bundle budget](DD.md#cli-bundle-budget).)
 These changes add no third-party dependency; the eager-dependency and cold-entry
 fences remain.
 The gate's bootstrap cannot load target runtime preloads or Bun project config;
@@ -8262,3 +8262,57 @@ not part of the eval.
 - **Changing routing or injecting a fan-out contract for dev tasks.** The
   router labels these requests simple. A prompt change was enough, and a
   routing change would affect every task.
+
+## ADR-086: The CLI Bundle Ceiling Is a Regression Tripwire with a 64 KiB Reserve
+
+**Status**: Accepted (2026-11-28). Unreleased; supersedes the 5 MiB − 49 KiB
+ceiling.
+
+**Context**: The build failed when `dist/kodax_cli.js` exceeded
+5 MiB − 49 KiB. The custom was never to raise that ceiling. Each feature
+therefore had to win bytes back: moving complete programs into packaged
+resources, loading integrations on demand, and in v0.7.97-rc.4 emitting the
+CLI as UTF-8. Headroom was 4.7 KB at rc.3. Issue 448 overshot by 351 bytes.
+UTF-8 output restored about 8 KB, and that saving cannot be repeated. DD
+already targeted a 64 KiB reserve for v0.7.99, which a fixed ceiling cannot
+reach while features keep landing.
+
+Total bytes are a weak proxy for startup cost. Parsing the whole CLI takes
+about 65 ms, about 13 ms per MB, so 100 KB costs about 1.3 ms. Startup is
+protected more directly by the eager heavy-import boundary, lazy CLI
+externals and the 160 KiB bare-resume entry. The size gate is still worth
+keeping: a dependency bundled by mistake or an optional path imported
+eagerly adds tens to hundreds of KB, and only the size gate catches it.
+
+**Decision**: The ceiling is a regression tripwire. It is the largest CLI
+build in the latest release run plus 64 KiB, rounded up to a whole KiB.
+From the rc.4 release run (up to 5064 kB) it is 5 MiB + 9 KiB
+(5,252,096 bytes).
+
+When the gate fails, growth is attributed per module first. An unexpected
+block is fixed, not absorbed. Normal growth resets the ceiling to the latest
+release build plus 64 KiB, with the reason recorded here. A removal that
+shrinks the CLI by more than 64 KiB lowers the ceiling the same way.
+The procedure lives in [DD CLI bundle budget](DD.md#cli-bundle-budget).
+
+**Consequences**:
+
+- Ordinary features no longer stall a release over a few hundred bytes, and
+  the gate stops rewarding byte-shaving that does not help users.
+- The gate keeps catching large accidental growth.
+- Each reset is a recorded decision with per-module attribution, so slow
+  drift stays visible.
+- The upcoming v1 SDK removal and legacy memory deletion should lower the
+  ceiling when they land.
+
+**Rejected alternatives**:
+
+- **Keep 5 MiB − 49 KiB and keep winning bytes back.** The one-time savings
+  are spent, so the next feature would block a release again, and the
+  pressure invites changes made to pass the gate rather than to help users.
+- **Drop the size gate and rely on the import fences.** The fences do not
+  catch a heavy dependency that is not on the list.
+- **Gate on measured startup time.** CI timing is noisy, and the existing
+  fences already cover startup structure.
+- **A per-change size delta gate.** It needs a stored baseline per build
+  composition, which is more machinery than the problem needs.

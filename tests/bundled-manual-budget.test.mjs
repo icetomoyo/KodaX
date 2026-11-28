@@ -15,8 +15,8 @@ test('npm package includes the required manual data', () => {
   assert.ok(packed[0].files.some(file => file.path === 'dist/generated-config-templates.json'));
 });
 
-test('CLI retains room for native Responses within the existing 5 MiB limit', () => {
-  assert.ok(statSync(new URL('../dist/kodax_cli.js', import.meta.url)).size <= 5 * 1024 * 1024 - 49 * 1024);
+test('CLI stays within the ADR-086 bundle tripwire', () => {
+  assert.ok(statSync(new URL('../dist/kodax_cli.js', import.meta.url)).size <= 5 * 1024 * 1024 + 9 * 1024);
 });
 
 test('published root and standalone Agent retain byte-identical audited Windows programs', () => {

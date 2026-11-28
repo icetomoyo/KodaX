@@ -446,11 +446,9 @@ assertSingleProviderCredentialModule('CLI', cliResult);
 
 const cliBytes = statSync(path.join(distDir, 'kodax_cli.js')).size;
 if (writeMetafile) writeFileSync(path.join(distDir, 'cli-meta.json'), JSON.stringify(cliResult.metafile));
-// Match the published-artifact fence: preserve 49 KiB of CLI headroom.
-// Audited program data stays in packaged resources, without trimming behavior.
-// Audited Windows programs are packaged intact instead of carried as JS literals.
-// See docs/designs/beta3-cli-reserve-audit-2026-11-07.md.
-assertBundleSize('CLI', cliBytes, 5 * 1024 * 1024 - 49 * 1024);
+// A regression tripwire, not a capacity cap: the measured release CLI plus a
+// 64 KiB reserve (ADR-086). Reset it under the DD "CLI bundle budget" rules.
+assertBundleSize('CLI', cliBytes, 5 * 1024 * 1024 + 9 * 1024);
 log(`  ✓ dist/kodax_cli.js (${(cliBytes / 1024).toFixed(0)} kB)`);
 
 // Bare `-r` must show the picker without evaluating the full CLI graph.

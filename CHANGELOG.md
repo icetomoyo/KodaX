@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- The CLI bundle ceiling is now a regression tripwire rather than a fixed cap:
+  the largest release CLI build plus a 64 KiB reserve, currently
+  5 MiB + 9 KiB (ADR-086). It replaces 5 MiB − 49 KiB, which left a few KB
+  of headroom and blocked releases over a few hundred bytes.
+
 ---
 
 ## [0.7.97-rc.4] - 2026-11-28
