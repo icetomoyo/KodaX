@@ -262,6 +262,19 @@ describe('FEATURE_218 manual registry', () => {
     expect(troubleshooting).toContain('`elevation_timeout`: the UAC prompt');
   });
 
+  it('documents image limits and the recovery offer for a rejected history', () => {
+    const tools = resolveKodaXManual({ topic: 'tools' }).content;
+    const sessions = resolveKodaXManual({ topic: 'sessions' }).content;
+    const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
+    const troubleshooting = resolveKodaXManual({ topic: 'troubleshooting' }).content;
+
+    expect(tools).toContain('Requests scale an image over 8000 px on a side');
+    expect(tools).toContain('text does not mention images. Images it accepted earlier keep their bytes');
+    expect(sessions).toContain('The REPL suggests /recover when the same 400, 413 or 422');
+    expect(sdk).toContain('`failureDetail.historyRejected: true` means the previous Run');
+    expect(troubleshooting).toContain('Every message of one session fails with the same 400');
+  });
+
   it('documents per-fix writer lanes and temporal artifact evidence', () => {
     const agents = resolveKodaXManual({ topic: 'agents' }).content;
     const tools = resolveKodaXManual({ topic: 'tools' }).content;
